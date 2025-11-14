@@ -13,9 +13,8 @@ if sys.platform == 'win32':
 # Third-party imports
 from telegram.ext import (
     Updater, CommandHandler, MessageHandler, CallbackQueryHandler,
-    CallbackContext
+    CallbackContext, Filters
 )
-from telegram.ext.filters import Text, Command, User
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
     CallbackQuery, Bot
@@ -147,10 +146,10 @@ def start(update: Update, context: CallbackContext):
             curd.addAdmin(chatid=chat_id)
             curd.addManage(chatid=chat_id)
             mngDetail = curd.getManage(chatid=chat_id)
-        if mngDetail[0] == 0:
-            botStatus = ["✅ روشن کردن ربات ✅", "setactive:1"]
-        else:
-            botStatus = ["❌ خاموش کردن ربات ❌", "setactive:0"]
+            if mngDetail[0] == 0:
+                botStatus = ["✅ روشن کردن ربات ✅", "setactive:1"]
+            else:
+                botStatus = ["❌ خاموش کردن ربات ❌", "setactive:0"]
 
             # دریافت آمار اگهی‌ها
             stats = curd.getStats(chatid=chat_id)
@@ -161,23 +160,23 @@ def start(update: Update, context: CallbackContext):
             type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
             type_name = type_names.get(nardeban_type, "ترتیبی کامل")
 
-        btns = [
-            [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
+            btns = [
+                [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
                 [InlineKeyboardButton(stats_text, callback_data='stats_info')],
-            [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
-            [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
+                [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
+                [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
                 [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
                 [InlineKeyboardButton('🔄 استخراج مجدد اگهی‌ها', callback_data='reExtract')],
-            [InlineKeyboardButton('غیر فعال کردن نردبان', callback_data='remJob')],
-        ]
-        if int(chat_id) == int(Datas.admin):
-            btns.append([InlineKeyboardButton('مدیریت ادمین ها',callback_data='manageAdmins')])
+                [InlineKeyboardButton('غیر فعال کردن نردبان', callback_data='remJob')],
+            ]
+            if int(chat_id) == int(Datas.admin):
+                btns.append([InlineKeyboardButton('مدیریت ادمین ها',callback_data='manageAdmins')])
             context.bot.send_message(chat_id=chat_id, text="🔥 M E N U : 👇", reply_markup=InlineKeyboardMarkup(btns))
             print(f"✅ منو برای کاربر {chat_id} ارسال شد")
-    else:
-        keyRequest = [[InlineKeyboardButton('درخواست ادمین شدن',callback_data='reqAdmin')]]
-        keyRequest = [[InlineKeyboardButton(ط¯ط±ط®ظˆط§ط³طھ ط§ط¯ظ…غŒظ† ط´ط¯ظ†,callback_data=reqAdmin)]]
-        context.bot.send_message(chat_id=chat_id, text=ط´ظ…ط§ ظ…ط¬ط§ط² ط¨ظ‡ ط§ط³طھظپط§ط¯ظ‡ ط§ط² ط±ط¨ط§طھ ظ†ظ…غŒط¨ط§ط´غŒط¯ .,
+        else:
+            keyRequest = [[InlineKeyboardButton('درخواست ادمین شدن',callback_data='reqAdmin')]]
+            context.bot.send_message(chat_id=chat_id, text="شما مجاز به استفاده از ربات نمیباشید .",
+                         reply_markup=InlineKeyboardMarkup(keyRequest))
             print(f"⚠️ کاربر {chat_id} مجاز نیست")
     except Exception as e:
         print(f"❌ خطا در تابع start: {e}")
@@ -217,32 +216,32 @@ def mainMenu(update: Update, context: CallbackContext):
         
         if isAdmin(chatid):
             status = curd.getStatus(chatid=user.chat_id) #0:slogin , 1:slimit, 2:scode
-        if status[1] == 1:
+            if status[1] == 1:
                 curd.editLimit(newLimit=user.text, chatid=chatid)
                 curd.setStatus(q="slimit", v=0, chatid=chatid)
-            txt = f"🔎 سقف تعداد اگهی برای نردبان روزانه به  <code>{str(user.text)}</code> تنظیم گردید. ✅"
+                txt = f"🔎 سقف تعداد اگهی برای نردبان روزانه به  <code>{str(user.text)}</code> تنظیم گردید. ✅"
                 context.bot.send_message(chat_id=user.chat_id, text=txt, reply_to_message_id=user.message_id,
                                  parse_mode='HTML')
-        elif status[0] == 1:
+            elif status[0] == 1:
                 curd.setStatus(q="slogin", v=user.text, chatid=chatid)
-            divarApi.login(phone=user.text)
+                divarApi.login(phone=user.text)
                 curd.setStatus(q="scode", v=1, chatid=chatid)
-            txt = f"🔎 کد با موفقیت به شماره <code>{str(user.text)}</code>ارسال شد ، لطفا کد را ارسال کنید :  ✅"
+                txt = f"🔎 کد با موفقیت به شماره <code>{str(user.text)}</code>ارسال شد ، لطفا کد را ارسال کنید :  ✅"
                 context.bot.send_message(chat_id=user.chat_id, text=txt, reply_to_message_id=user.message_id,
                                  parse_mode='HTML')
-        elif status[2] == 1:
+            elif status[2] == 1:
                 cookie = divarApi.verifyOtp(phone=status[0], code=user.text)
-            if cookie['token']:
+                if cookie['token']:
                     if curd.addLogin(phone=status[0], cookie=cookie['token'], chatid=chatid) == 0:
                         curd.updateLogin(phone=status[0], cookie=cookie['token'])
                     curd.setStatus(q="scode", v=0, chatid=chatid)
                     curd.setStatus(q="slogin", v=0, chatid=chatid)
-                txtr = f"✅ ورود به شماره {str(status[0])} موفقیت آمیز بود ."
-            else:
-                txtr = str(cookie)
+                    txtr = f"✅ ورود به شماره {str(status[0])} موفقیت آمیز بود ."
+                else:
+                    txtr = str(cookie)
                 context.bot.send_message(chat_id=user.chat_id, text=txtr, reply_to_message_id=user.message_id,
                                  parse_mode='HTML')
-    else:
+        else:
             context.bot.send_message(chat_id=user.chat_id, text="شما مجاز به استفاده از ربات نمیباشید .")
     except Exception as e:
         print(f"❌ خطا در تابع mainMenu: {e}")
@@ -497,8 +496,8 @@ def qrycall(update: Update, context: CallbackContext):
             
             qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
             qry.answer(text=result)
-                        else:
-        context.bot.send_message(chat_id=chatid, text="شما مجاز به استفاده از ربات نمیباشید .")
+        else:
+            context.bot.send_message(chat_id=chatid, text="شما مجاز به استفاده از ربات نمیباشید .")
 
 def startNardebanDasti(sch, chatid, end: int):
     updater.bot.send_message(chat_id=chatid, text="عملیات شروع شد")
@@ -618,12 +617,12 @@ def sendNardeban(chatid):
         # نوع 1: ترتیبی کامل هر لاگین (رفتار قبلی)
         if nardeban_type == 1:
             for l in available_logins:
-                    try:
-                        nardebanAPI = nardeban(apiKey=l[1])
+                try:
+                    nardebanAPI = nardeban(apiKey=l[1])
                     # چک کردن اینکه آیا توکن برای این شماره وجود دارد یا نه
-                        if curd.check_tokens_by_phone(phone=int(l[0])) == 1:
+                    if curd.check_tokens_by_phone(phone=int(l[0])) == 1:
                         # اگر توکن وجود نداشت، استخراج کن
-                            brandToken = nardebanAPI.getBranToken()
+                        brandToken = nardebanAPI.getBranToken()
                         if brandToken:
                             tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
                             if tokens:
@@ -631,7 +630,7 @@ def sendNardeban(chatid):
                                 updater.bot.send_message(chat_id=chatid,
                                              text=f"تعداد {str(len(tokens))} آکهی از شماره {str(l[0])} برای نردبان یافت و در دیتابیس ذخیره شد .")
                     
-                        result = nardebanAPI.sendNardeban(number=int(l[0]), chatid=chatid)
+                    result = nardebanAPI.sendNardeban(number=int(l[0]), chatid=chatid)
                     success = handleNardebanResult(result, l, chatid, nardebanAPI)
                     
                     # در هر اجرا فقط یک نردبان انجام می‌شود
@@ -665,7 +664,7 @@ def sendNardeban(chatid):
                 nardebanAPI = nardeban(apiKey=selected_login[1])
                 result = nardebanAPI.sendNardebanWithToken(number=int(selected_phone), chatid=chatid, token=selected_token)
                 handleNardebanResult(result, selected_login, chatid, nardebanAPI)
-                            except Exception as e:
+            except Exception as e:
                 print(f"Error in random nardeban: {e}")
                 updater.bot.send_message(chat_id=chatid, text=f"خطا در نردبان تصادفی: {str(e)}")
         
@@ -691,7 +690,7 @@ def sendNardeban(chatid):
                 nardebanAPI = nardeban(apiKey=selected_login[1])
                 result = nardebanAPI.sendNardebanWithToken(number=int(selected_login[0]), chatid=chatid, token=selected_token)
                 handleNardebanResult(result, selected_login, chatid, nardebanAPI)
-                    except Exception as e:
+            except Exception as e:
                 print(f"Error in round-robin nardeban: {e}")
                 updater.bot.send_message(chat_id=chatid, text=f"خطا در نردبان نوبتی: {str(e)}")
         
@@ -893,8 +892,8 @@ scheduler.start()
 # اضافه کردن handler ها به dispatcher
 dispatcher.add_handler(CommandHandler('start', start))
 dispatcher.add_handler(CommandHandler('end', shoro))
-dispatcher.add_handler(CommandHandler('add', addadmin, filters=User(user_id=Datas.admin)))
-dispatcher.add_handler(MessageHandler(Text() & ~Command(), mainMenu))
+dispatcher.add_handler(CommandHandler('add', addadmin, filters=Filters.user(user_id=Datas.admin)))
+dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, mainMenu))
 dispatcher.add_handler(CallbackQueryHandler(qrycall))
 
 # اجرای ربات
