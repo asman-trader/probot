@@ -30,10 +30,10 @@ from dapi import api, nardeban
 
 # Initialize configuration and database
 try:
-Datas = configBot()
+    Datas = configBot()
     curd = curdCommands(Datas)
     db = CreateDB(Datas)
-divarApi = api()
+    divarApi = api()
 except FileNotFoundError as e:
     print(f"❌ خطا: فایل پیکربندی یافت نشد: {e}")
     print("لطفاً فایل configs.json را بررسی کنید.")
@@ -134,7 +134,7 @@ def start(update: Update, context: CallbackContext):
     try:
         # پشتیبانی از هم message و هم callback_query
         if update.message:
-    user = update.message
+            user = update.message
             chat_id = user.chat_id
         elif update.callback_query:
             chat_id = update.callback_query.from_user.id
@@ -170,14 +170,14 @@ def start(update: Update, context: CallbackContext):
                 [InlineKeyboardButton('🔄 استخراج مجدد اگهی‌ها', callback_data='reExtract')],
             [InlineKeyboardButton('غیر فعال کردن نردبان', callback_data='remJob')],
         ]
-            if int(chat_id) == int(Datas.admin):
+        if int(chat_id) == int(Datas.admin):
             btns.append([InlineKeyboardButton('مدیریت ادمین ها',callback_data='manageAdmins')])
             context.bot.send_message(chat_id=chat_id, text="🔥 M E N U : 👇", reply_markup=InlineKeyboardMarkup(btns))
             print(f"✅ منو برای کاربر {chat_id} ارسال شد")
     else:
         keyRequest = [[InlineKeyboardButton('درخواست ادمین شدن',callback_data='reqAdmin')]]
-            context.bot.send_message(chat_id=chat_id, text="شما مجاز به استفاده از ربات نمیباشید .",
-                         reply_markup=InlineKeyboardMarkup(keyRequest))
+        keyRequest = [[InlineKeyboardButton(ط¯ط±ط®ظˆط§ط³طھ ط§ط¯ظ…غŒظ† ط´ط¯ظ†,callback_data=reqAdmin)]]
+        context.bot.send_message(chat_id=chat_id, text=ط´ظ…ط§ ظ…ط¬ط§ط² ط¨ظ‡ ط§ط³طھظپط§ط¯ظ‡ ط§ط² ط±ط¨ط§طھ ظ†ظ…غŒط¨ط§ط´غŒط¯ .,
             print(f"⚠️ کاربر {chat_id} مجاز نیست")
     except Exception as e:
         print(f"❌ خطا در تابع start: {e}")
@@ -211,8 +211,8 @@ def shoro(update: Update, context: CallbackContext):
 
 def mainMenu(update: Update, context: CallbackContext):
     try:
-    user = update.message
-    chatid = user.chat_id
+        user = update.message
+        chatid = user.chat_id
         print(f"📨 پیام متنی دریافت شد از کاربر: {chatid}, متن: {user.text[:50]}")
         
         if isAdmin(chatid):
