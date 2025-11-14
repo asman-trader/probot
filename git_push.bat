@@ -1,21 +1,38 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: نام فایل شمارنده
+echo Checking for changes...
+
+:: بررسی اینکه آیا چیزی برای commit هست یا نه
+git status --porcelain > temp_status.txt
+
+:: اگر فایل خالی باشد یعنی هیچ تغییری نیست
+for /f %%i in ('findstr /r "." temp_status.txt ^| find /c /v ""') do set changes=%%i
+del temp_status.txt
+
+if "%changes%"=="0" (
+    echo --------------------------------
+    echo No changes found. Skipping commit.
+    echo --------------------------------
+    pause
+    exit /b
+)
+
+echo Changes detected. Proceeding...
+
+:: فایل شمارنده
 set counterFile=commit_counter.txt
 
-:: اگر فایل شمارنده وجود ندارد، از 1 شروع کن
 if not exist %counterFile% (
     echo 1 > %counterFile%
 )
 
-:: خواندن عدد فعلی
+:: خواندن شمارنده
 set /p count=<%counterFile%
 
-echo Current commit number: %count%
 set commitMsg=commit-%count%
 
-echo Adding all files...
+echo Adding files...
 git add .
 
 echo Creating commit: %commitMsg%
@@ -30,6 +47,6 @@ echo %count% > %counterFile%
 
 echo ------------------------------
 echo Done! Commit created: %commitMsg%
-echo Next commit number saved: %count%
+echo Next commit number: %count%
 echo ------------------------------
 pause
