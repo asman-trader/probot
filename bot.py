@@ -35,6 +35,7 @@ from dapi import api, nardeban
 # Initialize configuration and database
 try:
     Datas = configBot()
+    print(f"🔍 [Startup] Datas.admin = {Datas.admin} (type: {type(Datas.admin)})")
     curd = curdCommands(Datas)
     db = CreateDB(Datas)
     divarApi = api()
@@ -120,9 +121,15 @@ except Exception as e:
 def isAdmin(chatid):
     """بررسی می‌کند که آیا کاربر ادمین است (شامل ادمین پیش‌فرض)"""
     try:
+        print(f"🔍 [isAdmin] ورودی: chatid={chatid}, type={type(chatid)}")
+        print(f"🔍 [isAdmin] Datas.admin={Datas.admin}, type={type(Datas.admin)}")
+        
         # تبدیل به int برای اطمینان از مقایسه صحیح
         chatid_int = int(chatid) if chatid is not None else None
         admin_int = int(Datas.admin) if Datas.admin is not None else None
+        
+        print(f"🔍 [isAdmin] بعد از تبدیل: chatid_int={chatid_int}, admin_int={admin_int}")
+        print(f"🔍 [isAdmin] مقایسه: {chatid_int} == {admin_int} => {chatid_int == admin_int}")
         
         # بررسی ادمین پیش‌فرض
         if chatid_int == admin_int:
@@ -131,7 +138,9 @@ def isAdmin(chatid):
         
         # بررسی ادمین‌های دیتابیس (تبدیل همه به int)
         admins_list = curd.getAdmins()
+        print(f"🔍 [isAdmin] لیست ادمین‌های دیتابیس (خام): {admins_list}")
         admins_list_int = [int(admin_id) for admin_id in admins_list] if admins_list else []
+        print(f"🔍 [isAdmin] لیست ادمین‌های دیتابیس (int): {admins_list_int}")
         
         if chatid_int in admins_list_int:
             print(f"✅ کاربر {chatid_int} در لیست ادمین‌ها است")
@@ -141,6 +150,8 @@ def isAdmin(chatid):
         return False
     except (ValueError, TypeError) as e:
         print(f"❌ خطا در بررسی ادمین بودن: {e} (chatid: {chatid}, type: {type(chatid)})")
+        import traceback
+        traceback.print_exc()
         return False
 
 def addadmin(update: Update, context: CallbackContext):
@@ -165,9 +176,13 @@ def start(update: Update, context: CallbackContext):
         else:
             return
         
-        print(f"📥 دستور /start دریافت شد از کاربر: {chat_id}")
+        print(f"📥 دستور /start دریافت شد از کاربر: {chat_id} (type: {type(chat_id)})")
+        print(f"🔍 بررسی ادمین بودن برای chat_id: {chat_id}, Datas.admin: {Datas.admin} (type: {type(Datas.admin)})")
         
-        if isAdmin(chat_id):
+        is_admin_result = isAdmin(chat_id)
+        print(f"🔍 نتیجه isAdmin: {is_admin_result}")
+        
+        if is_admin_result:
             curd.addAdmin(chatid=chat_id)
             curd.addManage(chatid=chat_id)
             mngDetail = curd.getManage(chatid=chat_id)

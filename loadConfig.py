@@ -15,7 +15,8 @@ class configBot:
                 self.database = db_name
             
             self.token = self.config['token']
-            self.admin = self.config['admin']
+            # تبدیل admin به int برای اطمینان از مقایسه صحیح
+            self.admin = int(self.config['admin']) if self.config.get('admin') is not None else None
             self.times = self.config['times']
             
             # برای سازگاری با کد قدیمی (اگر جایی استفاده شده باشد)
