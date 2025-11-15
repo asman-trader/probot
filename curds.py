@@ -481,10 +481,24 @@ class curdCommands:
             return "Error"
 
     def addSent(self, chatid, token, status):
+        """افزودن توکن نردبان شده به دیتابیس - برمی‌گرداند 1 اگر جدید بود، 0 اگر قبلاً وجود داشت"""
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "INSERT OR IGNORE INTO sents (chatid, token, status) VALUES (?, ?, ?)"
+            
+            # چک کردن اینکه آیا توکن قبلاً وجود دارد یا نه
+            check_sql = "SELECT id FROM sents WHERE chatid = ? AND token = ?"
+            cur.execute(check_sql, (chatid, token))
+            existing = cur.fetchone()
+            
+            if existing:
+                # توکن قبلاً وجود دارد
+                cur.close()
+                conn.close()
+                return 0
+            
+            # توکن جدید است، اضافه می‌کنیم
+            insrt = "INSERT INTO sents (chatid, token, status) VALUES (?, ?, ?)"
             cur.execute(insrt, (chatid, token, status))
             conn.commit()
             cur.close()

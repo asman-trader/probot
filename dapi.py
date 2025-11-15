@@ -376,85 +376,90 @@ class nardeban:
     def sendNardeban(self, number, chatid):
         iPost = -1
         tokens = self.curd.get_tokens_by_phone(phone=number)
-        # حلقه برای پیدا کردن یک پست مناسب
-        while 1:
-            try:
-                token = tokens[iPost]
-            except:
-                token = "1"
-                break
-            else:
-                # ذخیره در دیتابیس با وضعیت success در صورتی که نردبان موفق باشد
-                if self.curd.addSent(token=token, chatid=chatid, status="success") == 1:
-                    break
-                else:
-                    iPost -= 1
-        if token == "1":
-            # اگر هیچ پستی موجود نبود، بازگشت لیست با مقدار [0, "failed"]
+        # دریافت لیست توکن‌های pending (که قبلاً نردبان نشده‌اند)
+        pending_tokens = self.curd.get_pending_tokens_by_phone(phone=number, chatid=chatid)
+        
+        if not pending_tokens:
+            # هیچ توکن pending وجود ندارد
             return [2, "هیچ اگهی برای نردبان پیدا نشد."]
+        
+        # پیدا کردن اولین توکن pending در لیست tokens
+        token = None
+        for t in tokens:
+            if t in pending_tokens:
+                token = t
+                break
+        
+        if not token:
+            # هیچ توکن pending در لیست tokens پیدا نشد
+            return [2, "هیچ اگهی برای نردبان پیدا نشد."]
+        
+        # حالا توکن pending را پیدا کردیم، نردبان را انجام می‌دهیم
+        try:
+            planCost = int(self.selectPlan(token=token))
+        except Exception as e:
+            # خطا در انتخاب پلن
+            error_msg = str(e).strip()
+            if not error_msg:
+                error_msg = "Unknown error"
+            print(f"selectPlan error for token {token}: {error_msg}")
+            self.curd.addSent(token=token, chatid=chatid, status="failed")
+            # برگرداندن پیام خطای دقیق‌تر (با محدودیت طول برای جلوگیری از پیام‌های خیلی طولانی)
+            error_display = error_msg[:150] if len(error_msg) > 150 else error_msg
+            return [0, token, f"selectPlan: {error_display}"]
         else:
             try:
-                planCost = int(self.selectPlan(token=token))
+                orderId = self.createOrderID(token=token, planPrice=planCost)
             except Exception as e:
-                # خطا در انتخاب پلن
+                # خطا در ایجاد سفارش
                 error_msg = str(e).strip()
                 if not error_msg:
                     error_msg = "Unknown error"
-                print(f"selectPlan error for token {token}: {error_msg}")
+                print(f"createOrderID error for token {token}: {error_msg}")
                 self.curd.addSent(token=token, chatid=chatid, status="failed")
-                # برگرداندن پیام خطای دقیق‌تر (با محدودیت طول برای جلوگیری از پیام‌های خیلی طولانی)
                 error_display = error_msg[:150] if len(error_msg) > 150 else error_msg
-                return [0, token, f"selectPlan: {error_display}"]
+                return [0, token, f"createOrderID: {error_display}"]
             else:
                 try:
-                    orderId = self.createOrderID(token=token, planPrice=planCost)
+                    self.createFlow(order=orderId)
                 except Exception as e:
-                    # خطا در ایجاد سفارش
-                    error_msg = str(e).strip()
-                    if not error_msg:
-                        error_msg = "Unknown error"
-                    print(f"createOrderID error for token {token}: {error_msg}")
+                    print(e)
                     self.curd.addSent(token=token, chatid=chatid, status="failed")
-                    # برگرداندن پیام خطای دقیق‌تر (با محدودیت طول برای جلوگیری از پیام‌های خیلی طولانی)
-                    error_display = error_msg[:150] if len(error_msg) > 150 else error_msg
-                    return [0, token, f"createOrderID: {error_display}"]
+                    return [0, token, "createFlow"]
                 else:
                     try:
-                        self.createFlow(order=orderId)
+                        checkout = self.createCheckOut(order=orderId)
                     except Exception as e:
                         print(e)
                         self.curd.addSent(token=token, chatid=chatid, status="failed")
-                        return [0, token, "createFlow"]
+                        return [0, token, "createCheckOut"]
                     else:
                         try:
-                            checkout = self.createCheckOut(order=orderId)
+                            self.pay(orderid=orderId, checkout=checkout, number=str(number))
                         except Exception as e:
                             print(e)
                             self.curd.addSent(token=token, chatid=chatid, status="failed")
-                            return [0, token, "createCheckOut"]
+                            return [0, token, "pay"]
                         else:
                             try:
-                                self.pay(orderid=orderId, checkout=checkout, number=str(number))
+                                self.promote(orderid=orderId, token=token)
                             except Exception as e:
                                 print(e)
                                 self.curd.addSent(token=token, chatid=chatid, status="failed")
-                                return [0, token, "pay"]
+                                return [0, token, "promote"]
                             else:
-                                try:
-                                    self.promote(orderid=orderId, token=token)
-                                except Exception as e:
-                                    print(e)
-                                    self.curd.addSent(token=token, chatid=chatid, status="failed")
-                                    return [0, token, "promote"]
-                                else:
-                                    # بازگشت لیست با مقدار [1, token, number] در صورت موفقیت
-                                    return [1, token, number]
+                                # فقط در صورت موفقیت کامل، توکن را به عنوان success ذخیره می‌کنیم
+                                self.curd.addSent(token=token, chatid=chatid, status="success")
+                                # بازگشت لیست با مقدار [1, token, number] در صورت موفقیت
+                                return [1, token, number]
 
     def sendNardebanWithToken(self, number, chatid, token):
         """نردبان یک توکن خاص"""
         # چک کردن اینکه توکن قبلاً نردبان نشده باشد
-        if self.curd.addSent(token=token, chatid=chatid, status="success") != 1:
-            # توکن قبلاً استفاده شده
+        # بررسی اینکه آیا این توکن در لیست pending است یا نه
+        pending_tokens = self.curd.get_pending_tokens_by_phone(phone=number, chatid=chatid)
+        if token not in pending_tokens:
+            # توکن قبلاً نردبان شده است
             return [0, token, "این توکن قبلاً نردبان شده است"]
         
         try:
@@ -507,4 +512,6 @@ class nardeban:
                                 self.curd.addSent(token=token, chatid=chatid, status="failed")
                                 return [0, token, "promote"]
                             else:
+                                # فقط در صورت موفقیت کامل، توکن را به عنوان success ذخیره می‌کنیم
+                                self.curd.addSent(token=token, chatid=chatid, status="success")
                                 return [1, token, number]
