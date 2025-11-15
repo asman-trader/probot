@@ -102,16 +102,46 @@ except Exception as e:
 
 # اضافه کردن ادمین پیش‌فرض به دیتابیس
 try:
-    if Datas.admin not in curd.getAdmins():
-        curd.setAdmin(chatid=Datas.admin)
-        print(f"Admin پیش‌فرض ({Datas.admin}) به دیتابیس اضافه شد.")
+    admin_int = int(Datas.admin) if Datas.admin is not None else None
+    admins_list = curd.getAdmins()
+    admins_list_int = [int(admin_id) for admin_id in admins_list] if admins_list else []
+    
+    if admin_int not in admins_list_int:
+        curd.setAdmin(chatid=admin_int)
+        print(f"✅ Admin پیش‌فرض ({admin_int}) به دیتابیس اضافه شد.")
+    else:
+        print(f"ℹ️ Admin پیش‌فرض ({admin_int}) قبلاً در دیتابیس موجود است.")
 except Exception as e:
-    print(f"خطا در اضافه کردن ادمین پیش‌فرض: {e}")
+    print(f"❌ خطا در اضافه کردن ادمین پیش‌فرض: {e}")
+    import traceback
+    traceback.print_exc()
 
 # تابع helper برای چک کردن ادمین بودن (شامل ادمین پیش‌فرض)
 def isAdmin(chatid):
     """بررسی می‌کند که آیا کاربر ادمین است (شامل ادمین پیش‌فرض)"""
-    return chatid == Datas.admin or chatid in curd.getAdmins()
+    try:
+        # تبدیل به int برای اطمینان از مقایسه صحیح
+        chatid_int = int(chatid) if chatid is not None else None
+        admin_int = int(Datas.admin) if Datas.admin is not None else None
+        
+        # بررسی ادمین پیش‌فرض
+        if chatid_int == admin_int:
+            print(f"✅ کاربر {chatid_int} ادمین پیش‌فرض است (admin: {admin_int})")
+            return True
+        
+        # بررسی ادمین‌های دیتابیس (تبدیل همه به int)
+        admins_list = curd.getAdmins()
+        admins_list_int = [int(admin_id) for admin_id in admins_list] if admins_list else []
+        
+        if chatid_int in admins_list_int:
+            print(f"✅ کاربر {chatid_int} در لیست ادمین‌ها است")
+            return True
+        
+        print(f"❌ کاربر {chatid_int} ادمین نیست (admin پیش‌فرض: {admin_int}, لیست ادمین‌ها: {admins_list_int})")
+        return False
+    except (ValueError, TypeError) as e:
+        print(f"❌ خطا در بررسی ادمین بودن: {e} (chatid: {chatid}, type: {type(chatid)})")
+        return False
 
 def addadmin(update: Update, context: CallbackContext):
     user = update.message
