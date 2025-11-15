@@ -660,7 +660,9 @@ def sendNardeban(chatid):
         # بررسی و استخراج توکن‌ها در صورت نبودن
         ensureTokensExtracted(chatid, available_logins)
         
-        # نوع 1: ترتیبی کامل هر لاگین (رفتار قبلی)
+        # نوع 1: ترتیبی کامل هر لاگین
+        # رفتار: هر لاگین → همه آگهی‌هاش کامل نردبان می‌شود → بعد لاگین بعدی
+        # در هر اجرا فقط یک نردبان انجام می‌شود (از آخرین توکن pending)
         if nardeban_type == 1:
             for l in available_logins:
                 try:
@@ -676,6 +678,7 @@ def sendNardeban(chatid):
                                 updater.bot.send_message(chat_id=chatid,
                                              text=f"تعداد {str(len(tokens))} آکهی از شماره {str(l[0])} برای نردبان یافت و در دیتابیس ذخیره شد .")
                     
+                    # sendNardeban از آخر لیست توکن‌ها شروع می‌کند و اولین توکن pending را پیدا می‌کند
                     result = nardebanAPI.sendNardeban(number=int(l[0]), chatid=chatid)
                     success = handleNardebanResult(result, l, chatid, nardebanAPI)
                     
@@ -688,6 +691,7 @@ def sendNardeban(chatid):
                     updater.bot.send_message(chat_id=chatid, text=f"خطا در فرآیند نردبان برای شماره {l[0]}: {str(e)}")
         
         # نوع 2: تصادفی
+        # رفتار: در هر بار اجرای ربات، یک آگهی کاملاً تصادفی از بین همه لاگین‌ها انتخاب و نردبان می‌شود
         elif nardeban_type == 2:
             # دریافت تمام توکن‌های pending از همه لاگین‌ها
             all_pending = curd.get_all_pending_tokens(chatid=chatid)
@@ -697,7 +701,7 @@ def sendNardeban(chatid):
                 updater.bot.send_message(chat_id=chatid, text="⚠️ بعد از استخراج هم هیچ اگهی pending برای نردبان وجود ندارد.")
                 return
             
-            # انتخاب تصادفی یک توکن
+            # انتخاب تصادفی یک توکن از بین همه توکن‌های pending
             selected_phone, selected_token = random.choice(all_pending)
             
             # پیدا کردن لاگین مربوطه
@@ -715,17 +719,19 @@ def sendNardeban(chatid):
                 updater.bot.send_message(chat_id=chatid, text=f"خطا در نردبان تصادفی: {str(e)}")
         
         # نوع 3: ترتیبی نوبتی
+        # رفتار: از هر لاگین فقط یک آگهی → می‌ره سراغ لاگین بعدی → دوباره برمی‌گرده تا همه آگهی‌ها تمام شوند
         elif nardeban_type == 3:
             # پیدا کردن اولین لاگین که توکن pending دارد
             selected_login = None
             selected_token = None
             
             for l in available_logins:
+                # دریافت اولین توکن pending برای این لاگین
                 token = curd.get_next_pending_token_by_phone(phone=l[0], chatid=chatid)
                 if token:
                     selected_login = l
                     selected_token = token
-                    break
+                    break  # اولین لاگینی که توکن pending دارد را انتخاب می‌کنیم
             
             if not selected_login or not selected_token:
                 # اگر بعد از استخراج هم توکن pending وجود نداشت
@@ -741,6 +747,8 @@ def sendNardeban(chatid):
                 updater.bot.send_message(chat_id=chatid, text=f"خطا در نردبان نوبتی: {str(e)}")
         
         # نوع 4: جریان طبیعی (Natural Flow)
+        # رفتار: آگهی‌های قدیمی‌تر اولویت می‌گیرند، آگهی‌هایی که بازدید کمتر دارند زودتر نردبان می‌شوند
+        # فاصله زمانی بین نردبان‌ها کاملاً نامنظم است (3 تا 15 دقیقه)
         elif nardeban_type == 4:
             # دریافت تمام توکن‌های pending از همه لاگین‌ها
             all_pending = curd.get_all_pending_tokens(chatid=chatid)
@@ -762,10 +770,12 @@ def sendNardeban(chatid):
                 tokens_by_phone[phone].append(token)
             
             # انتخاب قدیمی‌ترین توکن از هر لاگین (اولین توکن در لیست = قدیمی‌ترین)
+            # توجه: get_pending_tokens_by_phone توکن‌ها را به ترتیب ذخیره‌سازی برمی‌گرداند
+            # که معمولاً قدیمی‌ترین توکن‌ها اول هستند
             selected_candidates = []
             for phone, tokens in tokens_by_phone.items():
                 if tokens:
-                    # اولین توکن = قدیمی‌ترین
+                    # اولین توکن = قدیمی‌ترین (فرض: ترتیب ذخیره‌سازی حفظ شده)
                     selected_candidates.append((phone, tokens[0]))
             
             if not selected_candidates:
@@ -773,9 +783,8 @@ def sendNardeban(chatid):
                 return
             
             # انتخاب قدیمی‌ترین آگهی از بین همه لاگین‌ها
-            # (اولین کاندیدا = قدیمی‌ترین، چون از اولین توکن هر لاگین استفاده کردیم)
-            # برای طبیعی‌تر شدن، می‌توانیم از بین چند کاندیدای اول انتخاب کنیم
-            # اما برای ساده‌سازی، از اولین کاندیدا استفاده می‌کنیم (قدیمی‌ترین)
+            # از اولین کاندیدا استفاده می‌کنیم (قدیمی‌ترین توکن از اولین لاگین)
+            # برای طبیعی‌تر شدن، می‌توان از بین چند کاندیدای اول انتخاب تصادفی کرد
             selected_phone, selected_token = selected_candidates[0]
             
             # پیدا کردن لاگین مربوطه
