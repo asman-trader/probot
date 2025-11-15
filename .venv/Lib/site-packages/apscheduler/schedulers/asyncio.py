@@ -1,17 +1,9 @@
-from __future__ import absolute_import
-from functools import wraps, partial
+import asyncio
+from functools import partial, wraps
 
+from apscheduler.schedulers import SchedulerNotRunningError
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.util import maybe_ref
-
-try:
-    import asyncio
-except ImportError:  # pragma: nocover
-    try:
-        import trollius as asyncio
-    except ImportError:
-        raise ImportError(
-            'AsyncIOScheduler requires either Python 3.4 or the asyncio package installed')
 
 
 def run_in_event_loop(func):
@@ -19,6 +11,7 @@ def run_in_event_loop(func):
     def wrapper(self, *args, **kwargs):
         wrapped = partial(func, self, *args, **kwargs)
         self._eventloop.call_soon_threadsafe(wrapped)
+
     return wrapper
 
 
@@ -38,14 +31,27 @@ class AsyncIOScheduler(BaseScheduler):
     _eventloop = None
     _timeout = None
 
+    def start(self, paused=False):
+        if not self._eventloop or self._eventloop.is_closed():
+            self._eventloop = asyncio.get_running_loop()
+
+        super().start(paused)
+
     @run_in_event_loop
-    def shutdown(self, wait=True):
-        super(AsyncIOScheduler, self).shutdown(wait)
+    def _shutdown(self, wait=True):
+        super().shutdown(wait)
         self._stop_timer()
+        self._eventloop = None
+
+    def shutdown(self, wait=True):
+        if not self.running:
+            raise SchedulerNotRunningError
+
+        self._shutdown(wait)
 
     def _configure(self, config):
-        self._eventloop = maybe_ref(config.pop('event_loop', None)) or asyncio.get_event_loop()
-        super(AsyncIOScheduler, self)._configure(config)
+        self._eventloop = maybe_ref(config.pop("event_loop", None))
+        super()._configure(config)
 
     def _start_timer(self, wait_seconds):
         self._stop_timer()
@@ -65,4 +71,5 @@ class AsyncIOScheduler(BaseScheduler):
 
     def _create_default_executor(self):
         from apscheduler.executors.asyncio import AsyncIOExecutor
+
         return AsyncIOExecutor()
