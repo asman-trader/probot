@@ -12,13 +12,19 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # Third-party imports
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters
-)
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    CallbackQuery
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    CallbackQuery,
+)
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    Filters,
+    CallbackContext
 )
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -47,11 +53,12 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 
-# ایجاد Application برای نسخه 20.x
+# ایجاد Updater برای نسخه PTB 12.8
 try:
-    # در نسخه 20.x از Application استفاده می‌شود
-    application = Application.builder().token(Datas.token).build()
-    print("✅ Application با موفقیت ایجاد شد")
+    # در نسخه PTB 12.8 از Updater استفاده می‌شود
+    updater = Updater(token=Datas.token, use_context=True)
+    application = updater  # برای سازگاری با کدهای موجود
+    print("✅ Updater با موفقیت ایجاد شد")
 except Exception as e:
     print(f"❌ خطا در ایجاد Application: {e}")
     print("\n💡 راهنمای رفع مشکل:")
@@ -107,7 +114,7 @@ def isAdmin(chatid):
     """بررسی می‌کند که آیا کاربر ادمین است (شامل ادمین پیش‌فرض)"""
     return chatid == Datas.admin or chatid in curd.getAdmins()
 
-async def addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def addadmin(update: Update, context: CallbackContext):
     user = update.message
     chatid = user.chat.id
     adminChatid = user.text.split(" ")[1]
@@ -118,7 +125,7 @@ async def addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: CallbackContext):
     try:
         # پشتیبانی از هم message و هم callback_query
         if update.message:
@@ -184,7 +191,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-async def shoro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def shoro(update: Update, context: CallbackContext):
     user = update.message
     if isAdmin(user.chat.id):
         if curd.getJob(chatid=user.chat.id):
@@ -203,7 +210,7 @@ async def shoro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await context.bot.send_message(chat_id=user.chat.id, text="شما مجاز به استفاده از ربات نمیباشید .")
 
-async def mainMenu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def mainMenu(update: Update, context: CallbackContext):
     try:
         user = update.message
         chatid = user.chat.id
@@ -248,7 +255,7 @@ async def mainMenu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def qrycall(update: Update, context: CallbackContext):
     qry: CallbackQuery = update.callback_query
     chatid = qry.from_user.id
     data = qry.data
@@ -885,8 +892,8 @@ scheduler = BackgroundScheduler(timezone="Asia/Tehran")
 # اضافه کردن handler ها به application
 application.add_handler(CommandHandler('start', start))
 application.add_handler(CommandHandler('end', shoro))
-application.add_handler(CommandHandler('add', addadmin, filters=filters.User(user_id=Datas.admin)))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mainMenu))
+application.add_handler(CommandHandler('add', addadmin, filters=Filters.user(user_id=Datas.admin)))
+application.add_handler(MessageHandler(Filters.text & ~Filters.command, mainMenu))
 application.add_handler(CallbackQueryHandler(qrycall))
 
 # اجرای ربات
@@ -901,20 +908,21 @@ if __name__ == '__main__':
             scheduler.start()
         
         # شروع polling با تنظیمات مناسب
-        # run_polling() خودش event loop را مدیریت می‌کند
+        # start_polling() برای PTB 12.8
         print("🔄 در حال شروع polling...")
-        application.run_polling(
+        updater.start_polling(
             poll_interval=1.0,  # فاصله بین polling ها (ثانیه)
             timeout=10,         # timeout برای هر درخواست
             bootstrap_retries=3  # تعداد تلاش برای اتصال اولیه
         )
+        updater.idle()  # نگه داشتن ربات در حال اجرا
         print("✅ ربات با موفقیت راه‌اندازی شد!")
         print("🔄 ربات در حال اجرا است. برای توقف از Ctrl+C استفاده کنید.")
         print("=" * 50)
     except KeyboardInterrupt:
         print("\n⚠️ ربات توسط کاربر متوقف شد.")
         try:
-            application.stop()
+            updater.stop()
         except:
             pass
         try:
