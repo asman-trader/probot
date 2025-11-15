@@ -270,11 +270,17 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            command = "CREATE TABLE IF NOT EXISTS manage(id INTEGER PRIMARY KEY AUTOINCREMENT, chatid INTEGER UNIQUE, active INTEGER, limite INTEGER, climit INTEGER, nardeban_type INTEGER)"
+            command = "CREATE TABLE IF NOT EXISTS manage(id INTEGER PRIMARY KEY AUTOINCREMENT, chatid INTEGER UNIQUE, active INTEGER, limite INTEGER, climit INTEGER, nardeban_type INTEGER, last_round_robin_phone INTEGER)"
             cur.execute(command)
             # اضافه کردن ستون nardeban_type به جدول موجود (اگر وجود نداشته باشد)
             try:
                 cur.execute("ALTER TABLE manage ADD COLUMN nardeban_type INTEGER DEFAULT 1")
+                conn.commit()
+            except:
+                pass  # ستون قبلاً وجود دارد
+            # اضافه کردن ستون last_round_robin_phone برای ردیابی آخرین لاگین استفاده شده در نوع نوبتی
+            try:
+                cur.execute("ALTER TABLE manage ADD COLUMN last_round_robin_phone INTEGER")
                 conn.commit()
             except:
                 pass  # ستون قبلاً وجود دارد
@@ -288,8 +294,8 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "INSERT OR IGNORE INTO manage (chatid, active, limite, climit, nardeban_type) VALUES (?, ?, ?, ?, ?)"
-            cur.execute(insrt, (chatid, 0, 100, 0, 1))  # 1 = ترتیبی کامل هر لاگین (پیش‌فرض)
+            insrt = "INSERT OR IGNORE INTO manage (chatid, active, limite, climit, nardeban_type, last_round_robin_phone) VALUES (?, ?, ?, ?, ?, ?)"
+            cur.execute(insrt, (chatid, 0, 100, 0, 1, None))  # 1 = ترتیبی کامل هر لاگین (پیش‌فرض)
             conn.commit()
             cur.close()
             conn.close()
@@ -543,18 +549,19 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "SELECT active, limite, climit, nardeban_type FROM manage WHERE chatid = ?"
+            insrt = "SELECT active, limite, climit, nardeban_type, last_round_robin_phone FROM manage WHERE chatid = ?"
             cur.execute(insrt, (chatid,))
             data = cur.fetchone()
             cur.close()
             conn.close()
             if data:
+                # اگر last_round_robin_phone وجود نداشته باشد (None)، به عنوان None برمی‌گردانیم
                 return data
             else:
-                return (0, 100, 0, 1)  # پیش‌فرض: ترتیبی کامل
+                return (0, 100, 0, 1, None)  # پیش‌فرض: ترتیبی کامل، بدون آخرین لاگین
         except Exception as e:
             print(f"Error getting manage: {e}")
-            return (0, 100, 0, 1)
+            return (0, 100, 0, 1, None)
 
     def editLimit(self, newLimit, chatid):
         try:

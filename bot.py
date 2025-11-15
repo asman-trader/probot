@@ -721,19 +721,38 @@ def sendNardeban(chatid):
         # نوع 3: ترتیبی نوبتی
         # رفتار: از هر لاگین فقط یک آگهی → می‌ره سراغ لاگین بعدی → دوباره برمی‌گرده تا همه آگهی‌ها تمام شوند
         elif nardeban_type == 3:
-            # پیدا کردن اولین لاگین که توکن pending دارد
+            # دریافت آخرین لاگین استفاده شده از دیتابیس (برای نوبتی بودن)
+            last_used_phone = None
+            if len(manageDetails) > 4 and manageDetails[4] is not None:
+                last_used_phone = manageDetails[4]
+            
+            # پیدا کردن لاگین بعدی که توکن pending دارد (نوبتی)
             selected_login = None
             selected_token = None
+            start_index = 0
             
-            for l in available_logins:
+            # اگر آخرین لاگین استفاده شده را می‌دانیم، از لاگین بعدی شروع می‌کنیم
+            if last_used_phone:
+                for i, l in enumerate(available_logins):
+                    if str(l[0]) == str(last_used_phone):
+                        start_index = (i + 1) % len(available_logins)  # از لاگین بعدی شروع می‌کنیم
+                        break
+            
+            # جستجوی نوبتی: از start_index شروع می‌کنیم و دور می‌زنیم
+            found = False
+            for i in range(len(available_logins)):
+                index = (start_index + i) % len(available_logins)
+                l = available_logins[index]
+                
                 # دریافت اولین توکن pending برای این لاگین
                 token = curd.get_next_pending_token_by_phone(phone=l[0], chatid=chatid)
                 if token:
                     selected_login = l
                     selected_token = token
+                    found = True
                     break  # اولین لاگینی که توکن pending دارد را انتخاب می‌کنیم
             
-            if not selected_login or not selected_token:
+            if not found or not selected_login or not selected_token:
                 # اگر بعد از استخراج هم توکن pending وجود نداشت
                 updater.bot.send_message(chat_id=chatid, text="⚠️ بعد از استخراج هم هیچ اگهی pending برای نردبان وجود ندارد.")
                 return
@@ -741,7 +760,12 @@ def sendNardeban(chatid):
             try:
                 nardebanAPI = nardeban(apiKey=selected_login[1])
                 result = nardebanAPI.sendNardebanWithToken(number=int(selected_login[0]), chatid=chatid, token=selected_token)
-                handleNardebanResult(result, selected_login, chatid, nardebanAPI)
+                success = handleNardebanResult(result, selected_login, chatid, nardebanAPI)
+                
+                # ذخیره آخرین لاگین استفاده شده برای نوبت بعدی
+                if success:
+                    # ذخیره شماره تلفن آخرین لاگین استفاده شده در دیتابیس
+                    curd.setStatusManage(q="last_round_robin_phone", v=int(selected_login[0]), chatid=chatid)
             except Exception as e:
                 print(f"Error in round-robin nardeban: {e}")
                 updater.bot.send_message(chat_id=chatid, text=f"خطا در نردبان نوبتی: {str(e)}")
