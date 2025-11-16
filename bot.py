@@ -154,12 +154,14 @@ def isAdmin(chatid):
                 else:
                     admin_int = int(Datas.admin)
                 
-                print(f"🔍 [isAdmin] chatid={chatid_int}, admin={admin_int}, مقایسه: {chatid_int == admin_int}")
+                print(f"🔍 [isAdmin] chatid={chatid_int} (type: {type(chatid_int)}), admin={admin_int} (type: {type(admin_int)}), مقایسه: {chatid_int == admin_int}")
                 
                 # بررسی ادمین پیش‌فرض
                 if chatid_int == admin_int:
-                    print(f"✅ کاربر {chatid_int} ادمین پیش‌فرض است")
+                    print(f"✅ کاربر {chatid_int} ادمین پیش‌فرض است - بازگشت True")
                     return True
+                else:
+                    print(f"⚠️ کاربر {chatid_int} ادمین پیش‌فرض نیست (admin: {admin_int})")
             except (ValueError, TypeError) as e:
                 print(f"⚠️ [isAdmin] خطا در تبدیل Datas.admin: {e} (Datas.admin: {Datas.admin}, type: {type(Datas.admin)})")
         else:
@@ -395,9 +397,15 @@ def qrycall(update: Update, context: CallbackContext):
         return  # خروج از تابع بعد از پردازش reqAdmin
     
     # بررسی ادمین بودن برای سایر callback ها
-    if not isAdmin(chatid):
-        qry.answer(text="❌ شما مجاز به استفاده از ربات نمیباشید.", show_alert=True)
+    print(f"🔍 [qrycall] بررسی ادمین بودن برای chatid={chatid}, data={data}")
+    is_admin = isAdmin(chatid)
+    print(f"🔍 [qrycall] نتیجه isAdmin: {is_admin}")
+    if not is_admin:
+        print(f"❌ [qrycall] کاربر {chatid} ادمین نیست - فقط پاسخ callback (بدون پیام خطا)")
+        # فقط پاسخ callback بده، بدون نمایش alert
+        qry.answer()
         return
+    print(f"✅ [qrycall] کاربر {chatid} ادمین است - ادامه پردازش")
     
     # اگر ادمین است، پردازش callback ها
     if data == "stats_info":
