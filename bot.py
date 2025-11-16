@@ -155,15 +155,51 @@ def isAdmin(chatid):
         return False
 
 def addadmin(update: Update, context: CallbackContext):
-    user = update.message
-    chatid = user.chat.id
-    adminChatid = user.text.split(" ")[1]
-    curd.setAdmin(chatid=adminChatid)
-    context.bot.send_message(chat_id=chatid, text="ادمین جدید با موفقیت به لیست ادمین ها افزوده شد .")
+    """افزودن ادمین جدید - فقط ادمین پیش‌فرض می‌تواند استفاده کند"""
     try:
-        context.bot.send_message(chat_id=adminChatid, text="تبریک ، شما به ادمین های ربات اضافه شدید ، برای تایید فعال سازی لطفا /start را ارسال کنید")
-    except:
-        pass
+        user = update.message
+        chatid = user.chat.id
+        
+        # بررسی اینکه آیا کاربر ادمین پیش‌فرض است
+        admin_int = int(Datas.admin) if Datas.admin is not None else None
+        if chatid != admin_int:
+            context.bot.send_message(chat_id=chatid, text="❌ شما مجاز به استفاده از این دستور نیستید.")
+            return
+        
+        # بررسی صحت ورودی
+        parts = user.text.split(" ")
+        if len(parts) < 2:
+            context.bot.send_message(chat_id=chatid, text="❌ لطفاً چت آیدی ادمین را وارد کنید.\nمثال: /add 123456789")
+            return
+        
+        try:
+            adminChatid = int(parts[1])
+        except ValueError:
+            context.bot.send_message(chat_id=chatid, text="❌ چت آیدی باید یک عدد باشد.\nمثال: /add 123456789")
+            return
+        
+        # بررسی اینکه آیا این ادمین قبلاً اضافه شده یا نه
+        if adminChatid == admin_int:
+            context.bot.send_message(chat_id=chatid, text="❌ این ادمین پیش‌فرض است و قبلاً در سیستم موجود است.")
+            return
+        
+        # اضافه کردن ادمین
+        if curd.setAdmin(chatid=adminChatid) == 1:
+            context.bot.send_message(chat_id=chatid, text="✅ ادمین جدید با موفقیت به لیست ادمین ها افزوده شد.")
+            try:
+                context.bot.send_message(chat_id=adminChatid, text="تبریک ، شما به ادمین های ربات اضافه شدید ، برای تایید فعال سازی لطفا /start را ارسال کنید")
+            except:
+                pass
+        else:
+            context.bot.send_message(chat_id=chatid, text="❌ مشکلی در اضافه کردن ادمین وجود دارد.")
+    except Exception as e:
+        print(f"❌ خطا در تابع addadmin: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            context.bot.send_message(chat_id=chatid, text="❌ خطایی در پردازش درخواست شما رخ داد.")
+        except:
+            pass
 
 def start(update: Update, context: CallbackContext):
     try:
@@ -388,16 +424,39 @@ def qrycall(update: Update, context: CallbackContext):
             qry.answer()
             start(update, context)
         if data == "manageAdmins":
+            # فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند
+            admin_int = int(Datas.admin) if Datas.admin is not None else None
+            if chatid != admin_int:
+                qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند!", show_alert=True)
+                return
+            
             adminsChatids = curd.getAdmins()
             newKeyAdmins = []
+            admin_int = int(Datas.admin) if Datas.admin is not None else None
+            
+            # اضافه کردن ادمین پیش‌فرض به لیست (با علامت ⭐ و غیرقابل حذف)
+            if admin_int:
+                newKeyAdmins.append(
+                    [
+                        InlineKeyboardButton(f'⭐ {str(admin_int)} (پیش‌فرض)', callback_data='none'),
+                        InlineKeyboardButton('🔒', callback_data='none')
+                    ]
+                )
+            
+            # اضافه کردن سایر ادمین‌ها
             if adminsChatids:
                 for admin in adminsChatids:
-                    newKeyAdmins.append(
-                        [
-                            InlineKeyboardButton(f'🗣 {str(admin)}', callback_data='none'),
-                            InlineKeyboardButton('❌', callback_data=f'delAdmin:{str(admin)}')
-                        ]
-                    )
+                    admin_id_int = int(admin)
+                    # اگر ادمین پیش‌فرض نبود، به لیست اضافه کن
+                    if admin_id_int != admin_int:
+                        newKeyAdmins.append(
+                            [
+                                InlineKeyboardButton(f'🗣 {str(admin)}', callback_data='none'),
+                                InlineKeyboardButton('❌', callback_data=f'delAdmin:{str(admin)}')
+                            ]
+                        )
+            
+            if newKeyAdmins:
                 qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(newKeyAdmins))
             else:
                 qry.answer(text="هیچ ادمینی وجود ندارد .", show_alert=True)
@@ -431,18 +490,35 @@ def qrycall(update: Update, context: CallbackContext):
             
             qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
         elif data.startswith("delAdmin"):
+            # فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند
+            admin_int = int(Datas.admin) if Datas.admin is not None else None
+            if chatid != admin_int:
+                qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند!", show_alert=True)
+                return
+            
             adminID = int(data.split(":")[1])
-            if curd.remAdmin(chatid=adminID) == 1:
-                txtResult = "کاربر مورد نظر با موفقیت از لیست ادمین ها حذف شد ."
-                try:
-                    context.bot.send_message(chat_id=adminID,
-                                     text="متاسفانه شما از لیست ادمین های ربات خارج شدید !")
-                except:
-                    pass
+            # بررسی اینکه آیا این ادمین پیش‌فرض است یا نه
+            if adminID == admin_int:
+                txtResult = "❌ نمی‌توانید ادمین پیش‌فرض را حذف کنید!"
+                qry.answer(text=txtResult, show_alert=True)
             else:
-                txtResult = "مشکلی در حذف کردن کاربر وجود دارد ."
-            qry.answer(text=txtResult, show_alert=True)
+                if curd.remAdmin(chatid=adminID) == 1:
+                    txtResult = "کاربر مورد نظر با موفقیت از لیست ادمین ها حذف شد ."
+                    try:
+                        context.bot.send_message(chat_id=adminID,
+                                         text="متاسفانه شما از لیست ادمین های ربات خارج شدید !")
+                    except:
+                        pass
+                else:
+                    txtResult = "مشکلی در حذف کردن کاربر وجود دارد ."
+                qry.answer(text=txtResult, show_alert=True)
         elif data.startswith("admin"):
+            # فقط ادمین پیش‌فرض می‌تواند ادمین اضافه کند
+            admin_int = int(Datas.admin) if Datas.admin is not None else None
+            if chatid != admin_int:
+                qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین اضافه کند!", show_alert=True)
+                return
+            
             newAdminChatID = int(data.split(":")[1])
             if curd.setAdmin(chatid=newAdminChatID) == 1:
                 txtResult = "کاربر مورد نظر با موفقیت به لیست ادمین ها اضافه شد ."
