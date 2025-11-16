@@ -291,6 +291,12 @@ def start(update: Update, context: CallbackContext):
             print(f"✅ منو برای کاربر {chat_id} ارسال شد")
         else:
             # اگر کاربر ادمین نبود → یک پیام و کیبورد بفرستد
+            # بررسی مجدد برای اطمینان از اینکه کاربر واقعاً ادمین نیست
+            final_check = isAdmin(chat_id)
+            if final_check:
+                print(f"⚠️ [start] کاربر {chat_id} در بررسی مجدد ادمین تشخیص داده شد - پیام خطا ارسال نمی‌شود")
+                return
+            
             keyRequest = [[InlineKeyboardButton('درخواست ادمین شدن', callback_data='reqAdmin')]]
             context.bot.send_message(
                 chat_id=chat_id,
@@ -331,6 +337,12 @@ def shoro(update: Update, context: CallbackContext):
                                  text="مقدار ساعت پایانی عددی باید بین 0 تا 23 باشد !",
                                  reply_to_message_id=user.message_id)
     else:
+        # بررسی مجدد برای اطمینان از اینکه کاربر واقعاً ادمین نیست
+        final_check = isAdmin(user.chat.id)
+        if final_check:
+            print(f"⚠️ [shoro] کاربر {user.chat.id} در بررسی مجدد ادمین تشخیص داده شد - پیام خطا ارسال نمی‌شود")
+            return
+        
         print(f"❌ [shoro] کاربر {user.chat.id} ادمین نیست - ارسال پیام خطا")
         context.bot.send_message(chat_id=user.chat.id, text="شما مجاز به استفاده از ربات نمیباشید .")
 
@@ -378,6 +390,12 @@ def mainMenu(update: Update, context: CallbackContext):
             else:
                 print(f"⚠️ [mainMenu] کاربر {chatid} ادمین است اما هیچ status فعالی ندارد - پیام ارسال نمی‌شود")
         else:
+            # بررسی مجدد برای اطمینان از اینکه کاربر واقعاً ادمین نیست
+            final_check = isAdmin(chatid)
+            if final_check:
+                print(f"⚠️ [mainMenu] کاربر {chatid} در بررسی مجدد ادمین تشخیص داده شد - پیام خطا ارسال نمی‌شود")
+                return
+            
             print(f"❌ [mainMenu] کاربر {chatid} ادمین نیست - ارسال پیام خطا")
             context.bot.send_message(chat_id=chatid, text="شما مجاز به استفاده از ربات نمیباشید .")
     except Exception as e:
