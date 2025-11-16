@@ -427,7 +427,7 @@ def qrycall(update: Update, context: CallbackContext):
         qry.answer()  # پاسخ سریع به callback
         context.bot.send_message(chat_id=chatid, text=stats_msg, parse_mode='HTML')
     elif data == "reExtract":
-            # استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال
+        # استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال
         qry.answer(text="در حال استخراج مجدد اگهی‌ها...", show_alert=False)
         reExtractTokens(chatid=chatid)
     elif data == "setNardebanType":
@@ -506,6 +506,7 @@ def qrycall(update: Update, context: CallbackContext):
                     )
         
         if newKeyAdmins:
+            qry.answer()  # پاسخ به callback
             qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(newKeyAdmins))
         else:
             qry.answer(text="هیچ ادمینی وجود ندارد .", show_alert=True)
@@ -537,6 +538,7 @@ def qrycall(update: Update, context: CallbackContext):
                 new_row.append(InlineKeyboardButton(button_text, callback_data=button_callback))
             new_keyboard.append(new_row)
         
+        qry.answer()  # پاسخ به callback
         qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
     elif data.startswith("delAdmin"):
         # فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند
@@ -584,6 +586,7 @@ def qrycall(update: Update, context: CallbackContext):
         else:
             qry.answer(text="مشکلی در حذف شدن وحود دارد")
     elif data.startswith("update"):
+        qry.answer()  # پاسخ به callback
         phoneL = data.split(":")[1]
         curd.setStatus(q="slogin", v=phoneL, chatid=chatid)
         divarApi.login(phone=phoneL)
@@ -591,10 +594,12 @@ def qrycall(update: Update, context: CallbackContext):
         txt = f"🔎 کد با موفقیت به شماره <code>{str(phoneL)}</code>ارسال شد ، لطفا کد را ارسال کنید :  ✅"
         context.bot.send_message(chat_id=qry.message.chat.id, text=txt, parse_mode='HTML')
     elif data == "setlimit":
+        qry.answer()  # پاسخ به callback
         curd.setStatus(q="slimit", v=1, chatid=chatid)
         context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                          text="🤠 لطفاً یک عدد برای تعیین سقف مجاز تعداد اگهی نردبان روازنه ارسال کنید : ")
     elif data == "managelogin":
+        qry.answer()  # پاسخ به callback
         txt = "🗣 لیست لاگین های شما : "
         logins = curd.getLogins(chatid=chatid)
         keyAdd = [InlineKeyboardButton('➕ اضافه کردن لاگین جدید ', callback_data='addlogin')]
@@ -619,6 +624,7 @@ def qrycall(update: Update, context: CallbackContext):
             key.append(keyAdd)
             context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key))
     elif data == "addlogin":
+        qry.answer()  # پاسخ به callback
         curd.setStatus(q="slogin", v=1, chatid=chatid)
         context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                          text="🤠 لطفاً شماره لاگین را وارد نمایید : ")
@@ -633,11 +639,11 @@ def qrycall(update: Update, context: CallbackContext):
             else:
                 txtResult = f"عملیات نردبان با آیدی {str(job_id)} با موفقیت غیرفعال سازی شد ."
                 curd.removeJob(chatid=chatid)
+            qry.answer()  # پاسخ به callback
             context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                              text=txtResult)
         else:
-            context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
-                             text="شما هیج نردبان فعالی ندارید !")
+            qry.answer(text="شما هیج نردبان فعالی ندارید !", show_alert=True)
     elif data.startswith("status"):
         details = data.split(":")
         result = curd.activeLogin(phone=details[2], status=int(details[1]))
@@ -665,6 +671,9 @@ def qrycall(update: Update, context: CallbackContext):
         
         qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
         qry.answer(text=result)
+    else:
+        # اگر هیچ callback match نکرد، فقط پاسخ بده (بدون پیام خطا)
+        qry.answer()
 
 def startNardebanDasti(sch, chatid, end: int):
     updater.bot.send_message(chat_id=chatid, text="عملیات شروع شد")
