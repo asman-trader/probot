@@ -4,6 +4,8 @@ import random
 import sys
 import time
 import io
+import json
+import os
 
 # تنظیم encoding برای Windows console
 if sys.platform == 'win32':
@@ -31,6 +33,16 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from loadConfig import configBot
 from curds import curdCommands, CreateDB
 from dapi import api, nardeban
+
+# ==================== مدیریت توکن‌ها در فایل JSON ====================
+from tokens_manager import (
+    add_tokens_to_json,
+    remove_token_from_json,
+    get_tokens_from_json,
+    get_all_pending_tokens_from_json,
+    has_pending_tokens_in_json
+)
+# ==================== پایان مدیریت توکن‌ها در فایل JSON ====================
 
 # Initialize configuration and database
 try:
@@ -866,20 +878,20 @@ def shouldExtractTokens(chatid, available_logins):
     2. حداقل یک توکن نردبان شده (success) وجود داشته باشد
     """
     try:
-        # چک کردن اینکه آیا توکن pending وجود دارد
-        all_pending = curd.get_all_pending_tokens(chatid=chatid)
+        # چک کردن اینکه آیا توکن pending در JSON وجود دارد
+        has_pending = has_pending_tokens_in_json(chatid=chatid)
         
         # اگر توکن pending وجود دارد، نیازی به استخراج نیست
-        if all_pending:
+        if has_pending:
             return False
         
         # بررسی اینکه آیا حداقل یک توکن نردبان شده (success) وجود دارد
         # استفاده از getStats برای بررسی تعداد نردبان شده
         stats = curd.getStats(chatid=chatid)
         
-        # اگر حداقل یک نردبان انجام شده باشد و هیچ pending وجود نداشته باشد
-        # یعنی همه توکن‌ها used شده‌اند و باید استخراج مجدد انجام شود
-        if stats['total_nardeban'] > 0 and stats['total_pending'] == 0:
+        # اگر حداقل یک نردبان انجام شده باشد و هیچ pending در JSON وجود نداشته باشد
+        # یعنی همه توکن‌ها نردبان شده‌اند و باید استخراج مجدد انجام شود
+        if stats['total_nardeban'] > 0:
             # همه اگهی‌ها نردبان شده‌اند - استخراج مجدد انجام می‌شود
             return True
         
@@ -913,15 +925,18 @@ def extractTokensIfNeeded(chatid, available_logins):
                 tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
                 
                 if tokens:
-                    # توکن‌های قدیمی حذف نمی‌شوند - فقط توکن‌های جدید اضافه می‌شوند
-                    # بررسی توکن‌های تکراری و اضافه کردن فقط توکن‌های جدید
-                    existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
-                    new_tokens = [t for t in tokens if t not in existing_tokens]
+                    # ذخیره توکن‌ها در JSON
+                    new_count = add_tokens_to_json(chatid=chatid, phone=int(l[0]), tokens=tokens)
                     
-                    if new_tokens:
-                        curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
+                    if new_count > 0:
+                        # همچنین در دیتابیس هم ذخیره کن (برای سازگاری)
+                        existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
+                        new_tokens = [t for t in tokens if t not in existing_tokens]
+                        if new_tokens:
+                            curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
+                        
                         updater.bot.send_message(chat_id=chatid,
-                                         text=f"✅ از شماره {l[0]}: {len(new_tokens)} اگهی جدید استخراج شد.")
+                                         text=f"✅ از شماره {l[0]}: {new_count} اگهی جدید استخراج و در JSON ذخیره شد.")
                     else:
                         updater.bot.send_message(chat_id=chatid,
                                          text=f"ℹ️ از شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند.")
@@ -981,8 +996,8 @@ def sendNardeban(chatid):
         # نوع 2: تصادفی
         # رفتار: در هر بار اجرای ربات، یک آگهی کاملاً تصادفی از بین همه لاگین‌ها انتخاب و نردبان می‌شود
         elif nardeban_type == 2:
-            # دریافت تمام توکن‌های pending از همه لاگین‌ها
-            all_pending = curd.get_all_pending_tokens(chatid=chatid)
+            # دریافت تمام توکن‌های pending از JSON
+            all_pending = get_all_pending_tokens_from_json(chatid=chatid)
             
             if not all_pending:
                 # اگر توکن pending وجود نداشت
@@ -1032,8 +1047,9 @@ def sendNardeban(chatid):
                 index = (start_index + i) % len(available_logins)
                 l = available_logins[index]
                 
-                # دریافت اولین توکن pending برای این لاگین
-                token = curd.get_next_pending_token_by_phone(phone=l[0], chatid=chatid)
+                # دریافت اولین توکن pending برای این لاگین از JSON
+                tokens_from_json = get_tokens_from_json(chatid=chatid, phone=int(l[0]))
+                token = tokens_from_json[0] if tokens_from_json else None
                 if token:
                     selected_login = l
                     selected_token = token
@@ -1062,8 +1078,8 @@ def sendNardeban(chatid):
         # رفتار: آگهی‌های قدیمی‌تر اولویت می‌گیرند، آگهی‌هایی که بازدید کمتر دارند زودتر نردبان می‌شوند
         # فاصله زمانی بین نردبان‌ها کاملاً نامنظم است (3 تا 15 دقیقه)
         elif nardeban_type == 4:
-            # دریافت تمام توکن‌های pending از همه لاگین‌ها
-            all_pending = curd.get_all_pending_tokens(chatid=chatid)
+            # دریافت تمام توکن‌های pending از JSON
+            all_pending = get_all_pending_tokens_from_json(chatid=chatid)
             
             if not all_pending:
                 # اگر توکن pending وجود نداشت
@@ -1136,6 +1152,17 @@ def sendNardeban(chatid):
 def handleNardebanResult(result, login_info, chatid, nardebanAPI):
     """تابع helper برای مدیریت نتیجه نردبان - برمی‌گرداند True اگر موفق بود"""
     if result[0] == 1:
+        # حذف توکن از JSON بعد از نردبان موفق
+        token = result[1] if len(result) > 1 else None
+        phone = result[2] if len(result) > 2 else login_info[0]
+        
+        if token:
+            removed = remove_token_from_json(chatid=chatid, phone=int(phone), token=token)
+            if removed:
+                print(f"✅ توکن {token} از JSON حذف شد (نردبان موفق)")
+            else:
+                print(f"⚠️ توکن {token} در JSON یافت نشد")
+        
         # به‌روزرسانی تعداد نردبان‌های استفاده‌شده برای لاگین فعلی
         curd.updateLimitLogin(phone=login_info[0])
         
@@ -1212,17 +1239,20 @@ def reExtractTokens(chatid):
                 tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
                 
                 if tokens:
-                    # توکن‌های قدیمی حذف نمی‌شوند - فقط توکن‌های جدید اضافه می‌شوند
-                    # بررسی توکن‌های تکراری و اضافه کردن فقط توکن‌های جدید
-                    existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
-                    new_tokens = [t for t in tokens if t not in existing_tokens]
+                    # ذخیره توکن‌ها در JSON
+                    new_count = add_tokens_to_json(chatid=chatid, phone=int(l[0]), tokens=tokens)
                     
-                    if new_tokens:
-                        curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
-                        total_extracted += len(new_tokens)
+                    if new_count > 0:
+                        # همچنین در دیتابیس هم ذخیره کن (برای سازگاری)
+                        existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
+                        new_tokens = [t for t in tokens if t not in existing_tokens]
+                        if new_tokens:
+                            curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
+                        
+                        total_extracted += new_count
                         success_count += 1
                         updater.bot.send_message(chat_id=chatid,
-                                                     text=f"✅ از شماره {l[0]}: {len(new_tokens)} اگهی جدید استخراج شد.")
+                                                     text=f"✅ از شماره {l[0]}: {new_count} اگهی جدید استخراج و در JSON ذخیره شد.")
                     else:
                         updater.bot.send_message(chat_id=chatid,
                                                      text=f"ℹ️ از شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند.")

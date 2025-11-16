@@ -375,23 +375,20 @@ class nardeban:
 
     def sendNardeban(self, number, chatid):
         iPost = -1
-        tokens = self.curd.get_tokens_by_phone(phone=number)
-        # دریافت لیست توکن‌های pending (که قبلاً نردبان نشده‌اند)
-        pending_tokens = self.curd.get_pending_tokens_by_phone(phone=number, chatid=chatid)
+        # دریافت توکن‌های pending از JSON
+        from tokens_manager import get_tokens_from_json
         
-        if not pending_tokens:
+        tokens = get_tokens_from_json(chatid=chatid, phone=int(number))
+        
+        if not tokens:
             # هیچ توکن pending وجود ندارد
             return [2, "هیچ اگهی برای نردبان پیدا نشد."]
         
-        # پیدا کردن اولین توکن pending در لیست tokens
-        token = None
-        for t in tokens:
-            if t in pending_tokens:
-                token = t
-                break
+        # انتخاب اولین توکن از لیست (قدیمی‌ترین)
+        token = tokens[0] if tokens else None
         
         if not token:
-            # هیچ توکن pending در لیست tokens پیدا نشد
+            # هیچ توکن pending پیدا نشد
             return [2, "هیچ اگهی برای نردبان پیدا نشد."]
         
         # حالا توکن pending را پیدا کردیم، نردبان را انجام می‌دهیم
