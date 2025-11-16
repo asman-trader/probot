@@ -877,12 +877,13 @@ def shouldExtractTokens(chatid, available_logins):
         # استفاده از getStats برای بررسی تعداد نردبان شده
         stats = curd.getStats(chatid=chatid)
         
-        # اگر حداقل یک نردبان انجام شده باشد، یعنی قبلاً نردبانی انجام شده
-        if stats['total_nardeban'] > 0:
-            # همه اگهی‌ها نردبان شده‌اند (چون pending = 0 و nardeban > 0)
+        # اگر حداقل یک نردبان انجام شده باشد و هیچ pending وجود نداشته باشد
+        # یعنی همه توکن‌ها used شده‌اند و باید استخراج مجدد انجام شود
+        if stats['total_nardeban'] > 0 and stats['total_pending'] == 0:
+            # همه اگهی‌ها نردبان شده‌اند - استخراج مجدد انجام می‌شود
             return True
         
-        # اگر هیچ نردبانی انجام نشده، استخراج نکن
+        # اگر هیچ نردبانی انجام نشده یا هنوز pending وجود دارد، استخراج نکن
         return False
     except Exception as e:
         print(f"Error in shouldExtractTokens: {e}")
@@ -912,12 +913,18 @@ def extractTokensIfNeeded(chatid, available_logins):
                 tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
                 
                 if tokens:
-                    # حذف توکن‌های قدیمی
-                    curd.delete_tokens_by_phone(phone=l[0])
-                    # اضافه کردن توکن‌های جدید
-                    curd.insert_tokens_by_phone(phone=int(l[0]), tokens=tokens)
-                    updater.bot.send_message(chat_id=chatid,
-                                     text=f"✅ از شماره {l[0]}: {len(tokens)} اگهی استخراج شد.")
+                    # توکن‌های قدیمی حذف نمی‌شوند - فقط توکن‌های جدید اضافه می‌شوند
+                    # بررسی توکن‌های تکراری و اضافه کردن فقط توکن‌های جدید
+                    existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
+                    new_tokens = [t for t in tokens if t not in existing_tokens]
+                    
+                    if new_tokens:
+                        curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
+                        updater.bot.send_message(chat_id=chatid,
+                                         text=f"✅ از شماره {l[0]}: {len(new_tokens)} اگهی جدید استخراج شد.")
+                    else:
+                        updater.bot.send_message(chat_id=chatid,
+                                         text=f"ℹ️ از شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند.")
                 else:
                     updater.bot.send_message(chat_id=chatid,
                                      text=f"⚠️ از شماره {l[0]}: هیچ اگهی‌ای یافت نشد.")
@@ -1205,14 +1212,21 @@ def reExtractTokens(chatid):
                 tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
                 
                 if tokens:
-                    # حذف توکن‌های قدیمی
-                    curd.delete_tokens_by_phone(phone=l[0])
-                    # اضافه کردن توکن‌های جدید
-                    curd.insert_tokens_by_phone(phone=int(l[0]), tokens=tokens)
-                    total_extracted += len(tokens)
-                    success_count += 1
-                    updater.bot.send_message(chat_id=chatid,
-                                                     text=f"✅ از شماره {l[0]}: {len(tokens)} اگهی استخراج شد.")
+                    # توکن‌های قدیمی حذف نمی‌شوند - فقط توکن‌های جدید اضافه می‌شوند
+                    # بررسی توکن‌های تکراری و اضافه کردن فقط توکن‌های جدید
+                    existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
+                    new_tokens = [t for t in tokens if t not in existing_tokens]
+                    
+                    if new_tokens:
+                        curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
+                        total_extracted += len(new_tokens)
+                        success_count += 1
+                        updater.bot.send_message(chat_id=chatid,
+                                                     text=f"✅ از شماره {l[0]}: {len(new_tokens)} اگهی جدید استخراج شد.")
+                    else:
+                        updater.bot.send_message(chat_id=chatid,
+                                                     text=f"ℹ️ از شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند.")
+                        success_count += 1
                 else:
                     updater.bot.send_message(chat_id=chatid,
                                                      text=f"⚠️ از شماره {l[0]}: هیچ اگهی‌ای یافت نشد.")
