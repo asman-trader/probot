@@ -313,7 +313,10 @@ def start(update: Update, context: CallbackContext):
 
 def shoro(update: Update, context: CallbackContext):
     user = update.message
-    if isAdmin(user.chat.id):
+    print(f"📨 [shoro] دستور /end دریافت شد از کاربر: {user.chat.id}")
+    is_admin_result = isAdmin(user.chat.id)
+    print(f"🔍 [shoro] نتیجه isAdmin: {is_admin_result}")
+    if is_admin_result:
         if curd.getJob(chatid=user.chat.id):
             context.bot.send_message(chat_id=user.chat.id, text="شما یک عملیات نردبان فعال دارید ، از غیرفعال سازی آن اطمینان یابید سپس اقدام کنید !", reply_to_message_id=user.message_id)
         else:
@@ -328,23 +331,31 @@ def shoro(update: Update, context: CallbackContext):
                                  text="مقدار ساعت پایانی عددی باید بین 0 تا 23 باشد !",
                                  reply_to_message_id=user.message_id)
     else:
+        print(f"❌ [shoro] کاربر {user.chat.id} ادمین نیست - ارسال پیام خطا")
         context.bot.send_message(chat_id=user.chat.id, text="شما مجاز به استفاده از ربات نمیباشید .")
 
 def mainMenu(update: Update, context: CallbackContext):
     try:
         user = update.message
         chatid = user.chat.id
-        print(f"📨 پیام متنی دریافت شد از کاربر: {chatid}, متن: {user.text[:50]}")
+        print(f"📨 [mainMenu] پیام متنی دریافت شد از کاربر: {chatid}, متن: {user.text[:50]}")
         
-        if isAdmin(chatid):
+        is_admin_result = isAdmin(chatid)
+        print(f"🔍 [mainMenu] نتیجه isAdmin: {is_admin_result}")
+        
+        if is_admin_result:
             status = curd.getStatus(chatid=chatid) #0:slogin , 1:slimit, 2:scode
+            print(f"🔍 [mainMenu] status: slogin={status[0]}, slimit={status[1]}, scode={status[2]}")
+            
             if status[1] == 1:
+                print(f"✅ [mainMenu] پردازش slimit برای کاربر {chatid}")
                 curd.editLimit(newLimit=user.text, chatid=chatid)
                 curd.setStatus(q="slimit", v=0, chatid=chatid)
                 txt = f"🔎 سقف تعداد اگهی برای نردبان روزانه به  <code>{str(user.text)}</code> تنظیم گردید. ✅"
                 context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
                                  parse_mode='HTML')
             elif status[0] == 1:
+                print(f"✅ [mainMenu] پردازش slogin برای کاربر {chatid}")
                 curd.setStatus(q="slogin", v=user.text, chatid=chatid)
                 divarApi.login(phone=user.text)
                 curd.setStatus(q="scode", v=1, chatid=chatid)
@@ -352,6 +363,7 @@ def mainMenu(update: Update, context: CallbackContext):
                 context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
                                  parse_mode='HTML')
             elif status[2] == 1:
+                print(f"✅ [mainMenu] پردازش scode برای کاربر {chatid}")
                 cookie = divarApi.verifyOtp(phone=status[0], code=user.text)
                 if cookie['token']:
                     if curd.addLogin(phone=status[0], cookie=cookie['token'], chatid=chatid) == 0:
@@ -363,7 +375,10 @@ def mainMenu(update: Update, context: CallbackContext):
                     txtr = str(cookie)
                 context.bot.send_message(chat_id=chatid, text=txtr, reply_to_message_id=user.message_id,
                                  parse_mode='HTML')
+            else:
+                print(f"⚠️ [mainMenu] کاربر {chatid} ادمین است اما هیچ status فعالی ندارد - پیام ارسال نمی‌شود")
         else:
+            print(f"❌ [mainMenu] کاربر {chatid} ادمین نیست - ارسال پیام خطا")
             context.bot.send_message(chat_id=chatid, text="شما مجاز به استفاده از ربات نمیباشید .")
     except Exception as e:
         print(f"❌ خطا در تابع mainMenu: {e}")
