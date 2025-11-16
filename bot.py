@@ -36,6 +36,15 @@ from dapi import api, nardeban
 try:
     Datas = configBot()
     print(f"🔍 [Startup] Datas.admin = {Datas.admin} (type: {type(Datas.admin)})")
+    
+    # بررسی اینکه admin تعریف شده است
+    if Datas.admin is None:
+        print("❌ خطا: admin در فایل configs.json تعریف نشده است!")
+        print("لطفاً فایل configs.json را بررسی کنید و مقدار 'admin' را تنظیم کنید.")
+        sys.exit(1)
+    
+    print(f"✅ Admin پیش‌فرض: {Datas.admin} (type: {type(Datas.admin)})")
+    
     curd = curdCommands(Datas)
     db = CreateDB(Datas)
     divarApi = api()
@@ -121,35 +130,68 @@ except Exception as e:
 def isAdmin(chatid):
     """بررسی می‌کند که آیا کاربر ادمین است (شامل ادمین پیش‌فرض)"""
     try:
-        print(f"🔍 [isAdmin] ورودی: chatid={chatid}, type={type(chatid)}")
-        print(f"🔍 [isAdmin] Datas.admin={Datas.admin}, type={type(Datas.admin)}")
+        # بررسی اولیه
+        if chatid is None:
+            print(f"❌ [isAdmin] chatid None است")
+            return False
         
-        # تبدیل به int برای اطمینان از مقایسه صحیح
-        chatid_int = int(chatid) if chatid is not None else None
-        admin_int = int(Datas.admin) if Datas.admin is not None else None
-        
-        print(f"🔍 [isAdmin] بعد از تبدیل: chatid_int={chatid_int}, admin_int={admin_int}")
-        print(f"🔍 [isAdmin] مقایسه: {chatid_int} == {admin_int} => {chatid_int == admin_int}")
+        # تبدیل chatid به int (ممکن است string یا int باشد)
+        try:
+            if isinstance(chatid, str):
+                chatid_int = int(chatid.strip())
+            else:
+                chatid_int = int(chatid)
+        except (ValueError, TypeError) as e:
+            print(f"❌ [isAdmin] خطا در تبدیل chatid به int: {e} (chatid: {chatid}, type: {type(chatid)})")
+            return False
         
         # بررسی ادمین پیش‌فرض
-        if chatid_int == admin_int:
-            print(f"✅ کاربر {chatid_int} ادمین پیش‌فرض است (admin: {admin_int})")
-            return True
+        if Datas.admin is not None:
+            try:
+                # Datas.admin ممکن است int یا string باشد
+                if isinstance(Datas.admin, str):
+                    admin_int = int(Datas.admin.strip())
+                else:
+                    admin_int = int(Datas.admin)
+                
+                print(f"🔍 [isAdmin] chatid={chatid_int}, admin={admin_int}, مقایسه: {chatid_int == admin_int}")
+                
+                # بررسی ادمین پیش‌فرض
+                if chatid_int == admin_int:
+                    print(f"✅ کاربر {chatid_int} ادمین پیش‌فرض است")
+                    return True
+            except (ValueError, TypeError) as e:
+                print(f"⚠️ [isAdmin] خطا در تبدیل Datas.admin: {e} (Datas.admin: {Datas.admin}, type: {type(Datas.admin)})")
+        else:
+            print(f"⚠️ [isAdmin] Datas.admin None است!")
         
-        # بررسی ادمین‌های دیتابیس (تبدیل همه به int)
-        admins_list = curd.getAdmins()
-        print(f"🔍 [isAdmin] لیست ادمین‌های دیتابیس (خام): {admins_list}")
-        admins_list_int = [int(admin_id) for admin_id in admins_list] if admins_list else []
-        print(f"🔍 [isAdmin] لیست ادمین‌های دیتابیس (int): {admins_list_int}")
+        # بررسی ادمین‌های دیتابیس
+        try:
+            admins_list = curd.getAdmins()
+            if admins_list:
+                admins_list_int = []
+                for admin_id in admins_list:
+                    try:
+                        if isinstance(admin_id, str):
+                            admins_list_int.append(int(admin_id.strip()))
+                        else:
+                            admins_list_int.append(int(admin_id))
+                    except (ValueError, TypeError):
+                        continue  # نادیده گرفتن مقادیر نامعتبر
+                
+                print(f"🔍 [isAdmin] لیست ادمین‌های دیتابیس: {admins_list_int}")
+                
+                if chatid_int in admins_list_int:
+                    print(f"✅ کاربر {chatid_int} در لیست ادمین‌ها است")
+                    return True
+        except Exception as e:
+            print(f"⚠️ [isAdmin] خطا در بررسی ادمین‌های دیتابیس: {e}")
         
-        if chatid_int in admins_list_int:
-            print(f"✅ کاربر {chatid_int} در لیست ادمین‌ها است")
-            return True
-        
-        print(f"❌ کاربر {chatid_int} ادمین نیست (admin پیش‌فرض: {admin_int}, لیست ادمین‌ها: {admins_list_int})")
+        print(f"❌ کاربر {chatid_int} ادمین نیست")
         return False
-    except (ValueError, TypeError) as e:
-        print(f"❌ خطا در بررسی ادمین بودن: {e} (chatid: {chatid}, type: {type(chatid)})")
+        
+    except Exception as e:
+        print(f"❌ [isAdmin] خطای غیرمنتظره: {e}")
         import traceback
         traceback.print_exc()
         return False

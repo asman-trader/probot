@@ -16,7 +16,21 @@ class configBot:
             
             self.token = self.config['token']
             # تبدیل admin به int برای اطمینان از مقایسه صحیح
-            self.admin = int(self.config['admin']) if self.config.get('admin') is not None else None
+            admin_value = self.config.get('admin')
+            if admin_value is not None:
+                try:
+                    # تبدیل به int (ممکن است string یا int باشد)
+                    if isinstance(admin_value, str):
+                        self.admin = int(admin_value.strip())
+                    else:
+                        self.admin = int(admin_value)
+                    print(f"✅ [loadConfig] Admin پیش‌فرض: {self.admin} (type: {type(self.admin)})")
+                except (ValueError, TypeError) as e:
+                    print(f"❌ [loadConfig] خطا در تبدیل admin به int: {e} (admin: {admin_value}, type: {type(admin_value)})")
+                    self.admin = None
+            else:
+                self.admin = None
+                print("⚠️ [loadConfig] admin در فایل configs.json تعریف نشده است!")
             self.times = self.config['times']
             
             # برای سازگاری با کد قدیمی (اگر جایی استفاده شده باشد)
