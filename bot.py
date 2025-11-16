@@ -154,14 +154,12 @@ def isAdmin(chatid):
                 else:
                     admin_int = int(Datas.admin)
                 
-                print(f"🔍 [isAdmin] chatid={chatid_int} (type: {type(chatid_int)}), admin={admin_int} (type: {type(admin_int)}), مقایسه: {chatid_int == admin_int}")
-                
                 # بررسی ادمین پیش‌فرض
                 if chatid_int == admin_int:
-                    print(f"✅ کاربر {chatid_int} ادمین پیش‌فرض است - بازگشت True")
+                    print(f"✅ [isAdmin] کاربر {chatid_int} ادمین پیش‌فرض است - بازگشت True")
                     return True
                 else:
-                    print(f"⚠️ کاربر {chatid_int} ادمین پیش‌فرض نیست (admin: {admin_int})")
+                    print(f"⚠️ [isAdmin] کاربر {chatid_int} ادمین پیش‌فرض نیست (admin: {admin_int})")
             except (ValueError, TypeError) as e:
                 print(f"⚠️ [isAdmin] خطا در تبدیل Datas.admin: {e} (Datas.admin: {Datas.admin}, type: {type(Datas.admin)})")
         else:
@@ -181,15 +179,13 @@ def isAdmin(chatid):
                     except (ValueError, TypeError):
                         continue  # نادیده گرفتن مقادیر نامعتبر
                 
-                print(f"🔍 [isAdmin] لیست ادمین‌های دیتابیس: {admins_list_int}")
-                
                 if chatid_int in admins_list_int:
-                    print(f"✅ کاربر {chatid_int} در لیست ادمین‌ها است")
+                    print(f"✅ [isAdmin] کاربر {chatid_int} در لیست ادمین‌ها است - بازگشت True")
                     return True
         except Exception as e:
             print(f"⚠️ [isAdmin] خطا در بررسی ادمین‌های دیتابیس: {e}")
         
-        print(f"❌ کاربر {chatid_int} ادمین نیست")
+        print(f"❌ [isAdmin] کاربر {chatid_int} ادمین نیست - بازگشت False")
         return False
         
     except Exception as e:
@@ -380,308 +376,326 @@ def mainMenu(update: Update, context: CallbackContext):
             pass
 
 def qrycall(update: Update, context: CallbackContext):
-    qry: CallbackQuery = update.callback_query
-    chatid = qry.from_user.id
-    data = qry.data
-    if data == "reqAdmin":
-        dataReq = qry.from_user
-        txtReq = f"🗣 کاربری با چت آیدی {str(dataReq.id)} و نام {dataReq.full_name}  برای ربات شما درخواست ادمینی دارد ، آیا تایید میکنید ؟"
-        btnadmin = [[InlineKeyboardButton('تایید', callback_data=f'admin:{str(dataReq.id)}')]]
-        try:
-            context.bot.send_message(chat_id=Datas.admin, text=txtReq, reply_markup=InlineKeyboardMarkup(btnadmin))
-        except:
-            txtResult = "مشکلی در ارسال درخواست وجود دارد ."
-        else:
-            txtResult = "درخواست شما برای ادمین ارسال شد ، منتظر تایید آن باشید !"
-        qry.answer(text=txtResult, show_alert=True)
-        return  # خروج از تابع بعد از پردازش reqAdmin
-    
-    # بررسی ادمین بودن برای سایر callback ها
-    print(f"🔍 [qrycall] بررسی ادمین بودن برای chatid={chatid}, data={data}")
-    is_admin = isAdmin(chatid)
-    print(f"🔍 [qrycall] نتیجه isAdmin: {is_admin}")
-    if not is_admin:
-        print(f"❌ [qrycall] کاربر {chatid} ادمین نیست - فقط پاسخ callback (بدون پیام خطا)")
-        # فقط پاسخ callback بده، بدون نمایش alert
-        qry.answer()
-        return
-    print(f"✅ [qrycall] کاربر {chatid} ادمین است - ادامه پردازش")
-    
-    # اگر ادمین است، پردازش callback ها
-    if data == "stats_info":
-        # نمایش اطلاعات آمار در یک پیام جداگانه
-        stats = curd.getStats(chatid=chatid)
-        
-        # ساخت پیام با آمار هر لاگین
-        stats_msg = "📊 <b>آمار اگهی‌های شما:</b>\n\n"
-        
-        # آمار هر لاگین
-        if stats['login_stats']:
-            for login_stat in stats['login_stats']:
-                stats_msg += f"📱 <b>شماره {login_stat['phone']}:</b>\n"
-                stats_msg += f"   ✅ نردبان شده: {login_stat['nardeban_count']}\n"
-                stats_msg += f"   📦 کل استخراج شده: {login_stat['total_tokens']}\n"
-                stats_msg += f"   ⏳ در انتظار: {login_stat['pending_count']}\n\n"
-        else:
-            stats_msg += "⚠️ هیچ لاگینی ثبت نشده است.\n\n"
-        
-        # جمع کل
-        stats_msg += "━━━━━━━━━━━━━━━━\n"
-        stats_msg += f"📊 <b>جمع کل:</b>\n"
-        stats_msg += f"   ✅ نردبان شده: {stats['total_nardeban']}\n"
-        stats_msg += f"   📦 کل استخراج شده: {stats['total_tokens']}\n"
-        stats_msg += f"   ⏳ در انتظار: {stats['total_pending']}"
-        
-        qry.answer()  # پاسخ سریع به callback
-        context.bot.send_message(chat_id=chatid, text=stats_msg, parse_mode='HTML')
-    elif data == "reExtract":
-        # استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال
-        qry.answer(text="در حال استخراج مجدد اگهی‌ها...", show_alert=False)
-        reExtractTokens(chatid=chatid)
-    elif data == "setNardebanType":
-        # نمایش منوی انتخاب نوع نردبان
-        mngDetail = curd.getManage(chatid=chatid)
-        current_type = mngDetail[3] if len(mngDetail) > 3 else 1
-        
-        type_buttons = [
-            [InlineKeyboardButton(f"{'✅' if current_type == 1 else '⚪'} 1️⃣ ترتیبی کامل هر لاگین", callback_data='nardebanType:1')],
-            [InlineKeyboardButton(f"{'✅' if current_type == 2 else '⚪'} 2️⃣ تصادفی", callback_data='nardebanType:2')],
-            [InlineKeyboardButton(f"{'✅' if current_type == 3 else '⚪'} 3️⃣ ترتیبی نوبتی", callback_data='nardebanType:3')],
-            [InlineKeyboardButton(f"{'✅' if current_type == 4 else '⚪'} 🎢 4️⃣ جریان طبیعی", callback_data='nardebanType:4')],
-            [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
-        ]
-        
-        qry.answer()
-        context.bot.send_message(
-            chat_id=chatid,
-            text="⚙️ <b>انتخاب نوع نردبان:</b>\n\n"
-                 "1️⃣ <b>ترتیبی کامل هر لاگین:</b>\n"
-                 "   هر لاگین → همه آگهی‌هاش کامل نردبان می‌شود → بعد لاگین بعدی\n\n"
-                 "2️⃣ <b>تصادفی:</b>\n"
-                 "   در هر بار اجرای ربات، یک آگهی کاملاً تصادفی از بین همه لاگین‌ها انتخاب و نردبان می‌شود\n\n"
-                 "3️⃣ <b>ترتیبی نوبتی:</b>\n"
-                 "   از هر لاگین فقط یک آگهی → می‌ره سراغ لاگین بعدی → دوباره برمی‌گرده تا همه آگهی‌ها تمام شوند\n\n"
-                 "🎢 4️⃣ <b>جریان طبیعی:</b>\n"
-                 "   آگهی‌های قدیمی‌تر اولویت می‌گیرند\n"
-                 "   آگهی‌هایی که بازدید کمتر دارند زودتر نردبان می‌شوند\n"
-                 "   فاصله زمانی بین نردبان‌ها کاملاً نامنظم است",
-            reply_markup=InlineKeyboardMarkup(type_buttons),
-            parse_mode='HTML'
-        )
-    elif data.startswith("nardebanType:"):
-        # تنظیم نوع نردبان
-        nardeban_type = int(data.split(":")[1])
-        curd.setStatusManage(q="nardeban_type", v=nardeban_type, chatid=chatid)
-        
-        type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
-        qry.answer(text=f"نوع نردبان به {type_names[nardeban_type]} تغییر یافت", show_alert=True)
-        # بازگشت به منو
-        start(update, context)
-    elif data == "backToMenu":
-        qry.answer()
-        start(update, context)
-    elif data == "manageAdmins":
-        # فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند
-        admin_int = int(Datas.admin) if Datas.admin is not None else None
-        if chatid != admin_int:
-            qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند!", show_alert=True)
+    try:
+        qry: CallbackQuery = update.callback_query
+        if not qry:
+            print("⚠️ [qrycall] callback_query None است")
             return
         
-        adminsChatids = curd.getAdmins()
-        newKeyAdmins = []
-        admin_int = int(Datas.admin) if Datas.admin is not None else None
+        chatid = qry.from_user.id
+        data = qry.data
         
-        # اضافه کردن ادمین پیش‌فرض به لیست (با علامت ⭐ و غیرقابل حذف)
-        if admin_int:
-            newKeyAdmins.append(
-                [
-                    InlineKeyboardButton(f'⭐ {str(admin_int)} (پیش‌فرض)', callback_data='none'),
-                    InlineKeyboardButton('🔒', callback_data='none')
-                ]
-            )
+        print(f"🔍 [qrycall] دریافت callback query: chatid={chatid}, data={data}")
         
-        # اضافه کردن سایر ادمین‌ها
-        if adminsChatids:
-            for admin in adminsChatids:
-                admin_id_int = int(admin)
-                # اگر ادمین پیش‌فرض نبود، به لیست اضافه کن
-                if admin_id_int != admin_int:
-                    newKeyAdmins.append(
-                        [
-                            InlineKeyboardButton(f'🗣 {str(admin)}', callback_data='none'),
-                            InlineKeyboardButton('❌', callback_data=f'delAdmin:{str(admin)}')
-                        ]
-                    )
-        
-        if newKeyAdmins:
-            qry.answer()  # پاسخ به callback
-            qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(newKeyAdmins))
-        else:
-            qry.answer(text="هیچ ادمینی وجود ندارد .", show_alert=True)
-    elif data.startswith("setactive"):
-        value = data.split(":")[1]
-        if value == "1":
-            curd.setStatusManage(q="active", v=1, chatid=chatid)
-        else:
-            curd.setStatusManage(q="active", v=0, chatid=chatid)
-        
-        # ساخت keyboard جدید به جای تغییر دادن keyboard موجود
-        old_keyboard = qry.message.reply_markup.inline_keyboard
-        new_keyboard = []
-        for row in old_keyboard:
-            new_row = []
-            for button in row:
-                button_text = button.text
-                button_callback = button.callback_data
-                
-                # تغییر دکمه setactive
-                if "setactive" in str(button_callback):
-                    if "خاموش" in button_text:
-                        button_text = "✅ روشن کردن ربات ✅"
-                        button_callback = "setactive:1"
-                    elif "روشن" in button_text:
-                        button_text = "❌ خاموش کردن ربات ❌"
-                        button_callback = "setactive:0"
-                
-                new_row.append(InlineKeyboardButton(button_text, callback_data=button_callback))
-            new_keyboard.append(new_row)
-        
-        qry.answer()  # پاسخ به callback
-        qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
-    elif data.startswith("delAdmin"):
-        # فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند
-        admin_int = int(Datas.admin) if Datas.admin is not None else None
-        if chatid != admin_int:
-            qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند!", show_alert=True)
-            return
-        
-        adminID = int(data.split(":")[1])
-        # بررسی اینکه آیا این ادمین پیش‌فرض است یا نه
-        if adminID == admin_int:
-            txtResult = "❌ نمی‌توانید ادمین پیش‌فرض را حذف کنید!"
+        if data == "reqAdmin":
+            dataReq = qry.from_user
+            txtReq = f"🗣 کاربری با چت آیدی {str(dataReq.id)} و نام {dataReq.full_name}  برای ربات شما درخواست ادمینی دارد ، آیا تایید میکنید ؟"
+            btnadmin = [[InlineKeyboardButton('تایید', callback_data=f'admin:{str(dataReq.id)}')]]
+            try:
+                context.bot.send_message(chat_id=Datas.admin, text=txtReq, reply_markup=InlineKeyboardMarkup(btnadmin))
+            except:
+                txtResult = "مشکلی در ارسال درخواست وجود دارد ."
+            else:
+                txtResult = "درخواست شما برای ادمین ارسال شد ، منتظر تایید آن باشید !"
             qry.answer(text=txtResult, show_alert=True)
-        else:
-            if curd.remAdmin(chatid=adminID) == 1:
-                txtResult = "کاربر مورد نظر با موفقیت از لیست ادمین ها حذف شد ."
+            return  # خروج از تابع بعد از پردازش reqAdmin
+        
+        # بررسی ادمین بودن برای سایر callback ها
+        print(f"🔍 [qrycall] بررسی ادمین بودن برای chatid={chatid}, data={data}")
+        is_admin = isAdmin(chatid)
+        print(f"🔍 [qrycall] نتیجه isAdmin: {is_admin}")
+        if not is_admin:
+            print(f"❌ [qrycall] کاربر {chatid} ادمین نیست - فقط پاسخ callback (بدون پیام خطا)")
+            # فقط پاسخ callback بده، بدون نمایش alert
+            qry.answer()
+            return
+        print(f"✅ [qrycall] کاربر {chatid} ادمین است - ادامه پردازش")
+        
+        # اگر ادمین است، پردازش callback ها
+        if data == "stats_info":
+            # نمایش اطلاعات آمار در یک پیام جداگانه
+            stats = curd.getStats(chatid=chatid)
+            
+            # ساخت پیام با آمار هر لاگین
+            stats_msg = "📊 <b>آمار اگهی‌های شما:</b>\n\n"
+            
+            # آمار هر لاگین
+            if stats['login_stats']:
+                for login_stat in stats['login_stats']:
+                    stats_msg += f"📱 <b>شماره {login_stat['phone']}:</b>\n"
+                    stats_msg += f"   ✅ نردبان شده: {login_stat['nardeban_count']}\n"
+                    stats_msg += f"   📦 کل استخراج شده: {login_stat['total_tokens']}\n"
+                    stats_msg += f"   ⏳ در انتظار: {login_stat['pending_count']}\n\n"
+            else:
+                stats_msg += "⚠️ هیچ لاگینی ثبت نشده است.\n\n"
+            
+            # جمع کل
+            stats_msg += "━━━━━━━━━━━━━━━━\n"
+            stats_msg += f"📊 <b>جمع کل:</b>\n"
+            stats_msg += f"   ✅ نردبان شده: {stats['total_nardeban']}\n"
+            stats_msg += f"   📦 کل استخراج شده: {stats['total_tokens']}\n"
+            stats_msg += f"   ⏳ در انتظار: {stats['total_pending']}"
+            
+            qry.answer()  # پاسخ سریع به callback
+            context.bot.send_message(chat_id=chatid, text=stats_msg, parse_mode='HTML')
+        elif data == "reExtract":
+            # استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال
+            qry.answer(text="در حال استخراج مجدد اگهی‌ها...", show_alert=False)
+            reExtractTokens(chatid=chatid)
+        elif data == "setNardebanType":
+            # نمایش منوی انتخاب نوع نردبان
+            mngDetail = curd.getManage(chatid=chatid)
+            current_type = mngDetail[3] if len(mngDetail) > 3 else 1
+            
+            type_buttons = [
+                [InlineKeyboardButton(f"{'✅' if current_type == 1 else '⚪'} 1️⃣ ترتیبی کامل هر لاگین", callback_data='nardebanType:1')],
+                [InlineKeyboardButton(f"{'✅' if current_type == 2 else '⚪'} 2️⃣ تصادفی", callback_data='nardebanType:2')],
+                [InlineKeyboardButton(f"{'✅' if current_type == 3 else '⚪'} 3️⃣ ترتیبی نوبتی", callback_data='nardebanType:3')],
+                [InlineKeyboardButton(f"{'✅' if current_type == 4 else '⚪'} 🎢 4️⃣ جریان طبیعی", callback_data='nardebanType:4')],
+                [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
+            ]
+            
+            qry.answer()
+            context.bot.send_message(
+                chat_id=chatid,
+                text="⚙️ <b>انتخاب نوع نردبان:</b>\n\n"
+                     "1️⃣ <b>ترتیبی کامل هر لاگین:</b>\n"
+                     "   هر لاگین → همه آگهی‌هاش کامل نردبان می‌شود → بعد لاگین بعدی\n\n"
+                     "2️⃣ <b>تصادفی:</b>\n"
+                     "   در هر بار اجرای ربات، یک آگهی کاملاً تصادفی از بین همه لاگین‌ها انتخاب و نردبان می‌شود\n\n"
+                     "3️⃣ <b>ترتیبی نوبتی:</b>\n"
+                     "   از هر لاگین فقط یک آگهی → می‌ره سراغ لاگین بعدی → دوباره برمی‌گرده تا همه آگهی‌ها تمام شوند\n\n"
+                     "🎢 4️⃣ <b>جریان طبیعی:</b>\n"
+                     "   آگهی‌های قدیمی‌تر اولویت می‌گیرند\n"
+                     "   آگهی‌هایی که بازدید کمتر دارند زودتر نردبان می‌شوند\n"
+                     "   فاصله زمانی بین نردبان‌ها کاملاً نامنظم است",
+                reply_markup=InlineKeyboardMarkup(type_buttons),
+                parse_mode='HTML'
+            )
+        elif data.startswith("nardebanType:"):
+            # تنظیم نوع نردبان
+            nardeban_type = int(data.split(":")[1])
+            curd.setStatusManage(q="nardeban_type", v=nardeban_type, chatid=chatid)
+            
+            type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
+            qry.answer(text=f"نوع نردبان به {type_names[nardeban_type]} تغییر یافت", show_alert=True)
+            # بازگشت به منو
+            start(update, context)
+        elif data == "backToMenu":
+            qry.answer()
+            start(update, context)
+        elif data == "manageAdmins":
+            # فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند
+            admin_int = int(Datas.admin) if Datas.admin is not None else None
+            if chatid != admin_int:
+                qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند!", show_alert=True)
+                return
+            
+            adminsChatids = curd.getAdmins()
+            newKeyAdmins = []
+            admin_int = int(Datas.admin) if Datas.admin is not None else None
+            
+            # اضافه کردن ادمین پیش‌فرض به لیست (با علامت ⭐ و غیرقابل حذف)
+            if admin_int:
+                newKeyAdmins.append(
+                    [
+                        InlineKeyboardButton(f'⭐ {str(admin_int)} (پیش‌فرض)', callback_data='none'),
+                        InlineKeyboardButton('🔒', callback_data='none')
+                    ]
+                )
+            
+            # اضافه کردن سایر ادمین‌ها
+            if adminsChatids:
+                for admin in adminsChatids:
+                    admin_id_int = int(admin)
+                    # اگر ادمین پیش‌فرض نبود، به لیست اضافه کن
+                    if admin_id_int != admin_int:
+                        newKeyAdmins.append(
+                            [
+                                InlineKeyboardButton(f'🗣 {str(admin)}', callback_data='none'),
+                                InlineKeyboardButton('❌', callback_data=f'delAdmin:{str(admin)}')
+                            ]
+                        )
+            
+            if newKeyAdmins:
+                qry.answer()  # پاسخ به callback
+                qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(newKeyAdmins))
+            else:
+                qry.answer(text="هیچ ادمینی وجود ندارد .", show_alert=True)
+        elif data.startswith("setactive"):
+            value = data.split(":")[1]
+            if value == "1":
+                curd.setStatusManage(q="active", v=1, chatid=chatid)
+            else:
+                curd.setStatusManage(q="active", v=0, chatid=chatid)
+            
+            # ساخت keyboard جدید به جای تغییر دادن keyboard موجود
+            old_keyboard = qry.message.reply_markup.inline_keyboard
+            new_keyboard = []
+            for row in old_keyboard:
+                new_row = []
+                for button in row:
+                    button_text = button.text
+                    button_callback = button.callback_data
+                    
+                    # تغییر دکمه setactive
+                    if "setactive" in str(button_callback):
+                        if "خاموش" in button_text:
+                            button_text = "✅ روشن کردن ربات ✅"
+                            button_callback = "setactive:1"
+                        elif "روشن" in button_text:
+                            button_text = "❌ خاموش کردن ربات ❌"
+                            button_callback = "setactive:0"
+                    
+                    new_row.append(InlineKeyboardButton(button_text, callback_data=button_callback))
+                new_keyboard.append(new_row)
+            
+            qry.answer()  # پاسخ به callback
+            qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
+        elif data.startswith("delAdmin"):
+            # فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند
+            admin_int = int(Datas.admin) if Datas.admin is not None else None
+            if chatid != admin_int:
+                qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند!", show_alert=True)
+                return
+            
+            adminID = int(data.split(":")[1])
+            # بررسی اینکه آیا این ادمین پیش‌فرض است یا نه
+            if adminID == admin_int:
+                txtResult = "❌ نمی‌توانید ادمین پیش‌فرض را حذف کنید!"
+                qry.answer(text=txtResult, show_alert=True)
+            else:
+                if curd.remAdmin(chatid=adminID) == 1:
+                    txtResult = "کاربر مورد نظر با موفقیت از لیست ادمین ها حذف شد ."
+                    try:
+                        context.bot.send_message(chat_id=adminID,
+                                         text="متاسفانه شما از لیست ادمین های ربات خارج شدید !")
+                    except:
+                        pass
+                else:
+                    txtResult = "مشکلی در حذف کردن کاربر وجود دارد ."
+                qry.answer(text=txtResult, show_alert=True)
+        elif data.startswith("admin"):
+            # فقط ادمین پیش‌فرض می‌تواند ادمین اضافه کند
+            admin_int = int(Datas.admin) if Datas.admin is not None else None
+            if chatid != admin_int:
+                qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین اضافه کند!", show_alert=True)
+                return
+            
+            newAdminChatID = int(data.split(":")[1])
+            if curd.setAdmin(chatid=newAdminChatID) == 1:
+                txtResult = "کاربر مورد نظر با موفقیت به لیست ادمین ها اضافه شد ."
                 try:
-                    context.bot.send_message(chat_id=adminID,
-                                     text="متاسفانه شما از لیست ادمین های ربات خارج شدید !")
+                    context.bot.send_message(chat_id=newAdminChatID, text="شما با موفقیت به لیست ادمین های ربات اضافه شدید برای فعال سازی لطفا /start را بزنید.")
                 except:
                     pass
             else:
-                txtResult = "مشکلی در حذف کردن کاربر وجود دارد ."
+                txtResult = "مشکلی در اضافه کردن کاربر وجود دارد ."
             qry.answer(text=txtResult, show_alert=True)
-    elif data.startswith("admin"):
-        # فقط ادمین پیش‌فرض می‌تواند ادمین اضافه کند
-        admin_int = int(Datas.admin) if Datas.admin is not None else None
-        if chatid != admin_int:
-            qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین اضافه کند!", show_alert=True)
-            return
-        
-        newAdminChatID = int(data.split(":")[1])
-        if curd.setAdmin(chatid=newAdminChatID) == 1:
-            txtResult = "کاربر مورد نظر با موفقیت به لیست ادمین ها اضافه شد ."
-            try:
-                context.bot.send_message(chat_id=newAdminChatID, text="شما با موفقیت به لیست ادمین های ربات اضافه شدید برای فعال سازی لطفا /start را بزنید.")
-            except:
-                pass
-        else:
-            txtResult = "مشکلی در اضافه کردن کاربر وجود دارد ."
-        qry.answer(text=txtResult, show_alert=True)
-    elif data.startswith("del"):
-        if curd.delLogin(phone=data.split(":")[1]) == 1:
-            qry.answer(text="با موفقیت حذف شد")
-        else:
-            qry.answer(text="مشکلی در حذف شدن وحود دارد")
-    elif data.startswith("update"):
-        qry.answer()  # پاسخ به callback
-        phoneL = data.split(":")[1]
-        curd.setStatus(q="slogin", v=phoneL, chatid=chatid)
-        divarApi.login(phone=phoneL)
-        curd.setStatus(q="scode", v=1, chatid=chatid)
-        txt = f"🔎 کد با موفقیت به شماره <code>{str(phoneL)}</code>ارسال شد ، لطفا کد را ارسال کنید :  ✅"
-        context.bot.send_message(chat_id=qry.message.chat.id, text=txt, parse_mode='HTML')
-    elif data == "setlimit":
-        qry.answer()  # پاسخ به callback
-        curd.setStatus(q="slimit", v=1, chatid=chatid)
-        context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
-                         text="🤠 لطفاً یک عدد برای تعیین سقف مجاز تعداد اگهی نردبان روازنه ارسال کنید : ")
-    elif data == "managelogin":
-        qry.answer()  # پاسخ به callback
-        txt = "🗣 لیست لاگین های شما : "
-        logins = curd.getLogins(chatid=chatid)
-        keyAdd = [InlineKeyboardButton('➕ اضافه کردن لاگین جدید ', callback_data='addlogin')]
-        if logins == 0:
-            txt += "شما هیچ شماره ای تا به حال اضافه نکرده اید !"
-            context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup([keyAdd]))
-        else:
-            key = []
-            for l in logins:
-                phoneL = l[0]
-                print(phoneL)
-                if l[2] == 0:
-                    status = ["❌", 1]
-                else:
-                    status = ["✅", 0]
-                keyL = [
-                    InlineKeyboardButton(status[0], callback_data=f"status:{str(status[1])}:{str(phoneL)}"),
-                    InlineKeyboardButton(str(phoneL), callback_data=f"del:{str(phoneL)}"),
-                    InlineKeyboardButton("🔄", callback_data=f"update:{str(phoneL)}"),
-                ]
-                key.append(keyL)
-            key.append(keyAdd)
-            context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key))
-    elif data == "addlogin":
-        qry.answer()  # پاسخ به callback
-        curd.setStatus(q="slogin", v=1, chatid=chatid)
-        context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
-                         text="🤠 لطفاً شماره لاگین را وارد نمایید : ")
-    elif data == "remJob":
-        job_id = curd.getJob(chatid=chatid)
-        if job_id:
-            try:
-                scheduler.remove_job(job_id=job_id)
-            except Exception as e:
-                txtResult = f"در غیر فعال سازی عملیات نردبان یک مشکل وجود دارد ! متن ارور : {str(e)}"
-                curd.removeJob(chatid=chatid)
+        elif data.startswith("del"):
+            if curd.delLogin(phone=data.split(":")[1]) == 1:
+                qry.answer(text="با موفقیت حذف شد")
             else:
-                txtResult = f"عملیات نردبان با آیدی {str(job_id)} با موفقیت غیرفعال سازی شد ."
-                curd.removeJob(chatid=chatid)
+                qry.answer(text="مشکلی در حذف شدن وحود دارد")
+        elif data.startswith("update"):
             qry.answer()  # پاسخ به callback
+            phoneL = data.split(":")[1]
+            curd.setStatus(q="slogin", v=phoneL, chatid=chatid)
+            divarApi.login(phone=phoneL)
+            curd.setStatus(q="scode", v=1, chatid=chatid)
+            txt = f"🔎 کد با موفقیت به شماره <code>{str(phoneL)}</code>ارسال شد ، لطفا کد را ارسال کنید :  ✅"
+            context.bot.send_message(chat_id=qry.message.chat.id, text=txt, parse_mode='HTML')
+        elif data == "setlimit":
+            qry.answer()  # پاسخ به callback
+            curd.setStatus(q="slimit", v=1, chatid=chatid)
             context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
-                             text=txtResult)
+                             text="🤠 لطفاً یک عدد برای تعیین سقف مجاز تعداد اگهی نردبان روازنه ارسال کنید : ")
+        elif data == "managelogin":
+            qry.answer()  # پاسخ به callback
+            txt = "🗣 لیست لاگین های شما : "
+            logins = curd.getLogins(chatid=chatid)
+            keyAdd = [InlineKeyboardButton('➕ اضافه کردن لاگین جدید ', callback_data='addlogin')]
+            if logins == 0:
+                txt += "شما هیچ شماره ای تا به حال اضافه نکرده اید !"
+                context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup([keyAdd]))
+            else:
+                key = []
+                for l in logins:
+                    phoneL = l[0]
+                    print(phoneL)
+                    if l[2] == 0:
+                        status = ["❌", 1]
+                    else:
+                        status = ["✅", 0]
+                    keyL = [
+                        InlineKeyboardButton(status[0], callback_data=f"status:{str(status[1])}:{str(phoneL)}"),
+                        InlineKeyboardButton(str(phoneL), callback_data=f"del:{str(phoneL)}"),
+                        InlineKeyboardButton("🔄", callback_data=f"update:{str(phoneL)}"),
+                    ]
+                    key.append(keyL)
+                key.append(keyAdd)
+                context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key))
+        elif data == "addlogin":
+            qry.answer()  # پاسخ به callback
+            curd.setStatus(q="slogin", v=1, chatid=chatid)
+            context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
+                             text="🤠 لطفاً شماره لاگین را وارد نمایید : ")
+        elif data == "remJob":
+            job_id = curd.getJob(chatid=chatid)
+            if job_id:
+                try:
+                    scheduler.remove_job(job_id=job_id)
+                except Exception as e:
+                    txtResult = f"در غیر فعال سازی عملیات نردبان یک مشکل وجود دارد ! متن ارور : {str(e)}"
+                    curd.removeJob(chatid=chatid)
+                else:
+                    txtResult = f"عملیات نردبان با آیدی {str(job_id)} با موفقیت غیرفعال سازی شد ."
+                    curd.removeJob(chatid=chatid)
+                qry.answer()  # پاسخ به callback
+                context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
+                                 text=txtResult)
+            else:
+                qry.answer(text="شما هیج نردبان فعالی ندارید !", show_alert=True)
+        elif data.startswith("status"):
+            details = data.split(":")
+            result = curd.activeLogin(phone=details[2], status=int(details[1]))
+            
+            # ساخت keyboard جدید به جای تغییر دادن keyboard موجود
+            old_keyboard = qry.message.reply_markup.inline_keyboard
+            new_keyboard = []
+            for row in old_keyboard:
+                new_row = []
+                for button in row:
+                    button_text = button.text
+                    button_callback = str(button.callback_data)
+                    
+                    # تغییر دکمه status مربوط به این شماره
+                    if button_callback.split(":")[0] == "status" and button_callback.split(":")[2] == details[2]:
+                        if "❌" in button_text:
+                            button_text = button_text.replace("❌", "✅")
+                            button_callback = f"status:0:{details[2]}"
+                        elif "✅" in button_text:
+                            button_text = button_text.replace("✅", "❌")
+                            button_callback = f"status:1:{details[2]}"
+                    
+                    new_row.append(InlineKeyboardButton(button_text, callback_data=button_callback))
+                new_keyboard.append(new_row)
+            
+            qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
+            qry.answer(text=result)
         else:
-            qry.answer(text="شما هیج نردبان فعالی ندارید !", show_alert=True)
-    elif data.startswith("status"):
-        details = data.split(":")
-        result = curd.activeLogin(phone=details[2], status=int(details[1]))
-        
-        # ساخت keyboard جدید به جای تغییر دادن keyboard موجود
-        old_keyboard = qry.message.reply_markup.inline_keyboard
-        new_keyboard = []
-        for row in old_keyboard:
-            new_row = []
-            for button in row:
-                button_text = button.text
-                button_callback = str(button.callback_data)
-                
-                # تغییر دکمه status مربوط به این شماره
-                if button_callback.split(":")[0] == "status" and button_callback.split(":")[2] == details[2]:
-                    if "❌" in button_text:
-                        button_text = button_text.replace("❌", "✅")
-                        button_callback = f"status:0:{details[2]}"
-                    elif "✅" in button_text:
-                        button_text = button_text.replace("✅", "❌")
-                        button_callback = f"status:1:{details[2]}"
-                
-                new_row.append(InlineKeyboardButton(button_text, callback_data=button_callback))
-            new_keyboard.append(new_row)
-        
-        qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
-        qry.answer(text=result)
-    else:
-        # اگر هیچ callback match نکرد، فقط پاسخ بده (بدون پیام خطا)
-        qry.answer()
+            # اگر هیچ callback match نکرد، فقط پاسخ بده (بدون پیام خطا)
+            print(f"⚠️ [qrycall] هیچ handler برای data={data} پیدا نشد")
+            qry.answer()
+    except Exception as e:
+        print(f"❌ [qrycall] خطا در پردازش callback query: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            if update.callback_query:
+                update.callback_query.answer()
+        except:
+            pass
 
 def startNardebanDasti(sch, chatid, end: int):
     updater.bot.send_message(chat_id=chatid, text="عملیات شروع شد")
