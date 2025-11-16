@@ -299,6 +299,7 @@ def start(update: Update, context: CallbackContext):
             btns = [
                 [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
                 [InlineKeyboardButton(stats_text, callback_data='stats_info')],
+                [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
                 [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
                 [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
                 [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
@@ -521,6 +522,7 @@ def qrycall(update: Update, context: CallbackContext):
                 btns = [
                     [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
                     [InlineKeyboardButton(updated_stats_text, callback_data='stats_info')],
+                    [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
                     [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
                     [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
                     [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
@@ -535,6 +537,104 @@ def qrycall(update: Update, context: CallbackContext):
                 print(f"✅ [stats_info] منو با آمار به‌روز برای کاربر {chatid} به‌روزرسانی شد")
             except Exception as e:
                 print(f"⚠️ [stats_info] خطا در به‌روزرسانی منو: {e}")
+        elif data == "listAds":
+            # نمایش لیست اگهی‌ها با لینک کامل
+            try:
+                try:
+                    qry.answer()
+                except Exception as e:
+                    print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
+                
+                # دریافت تمام توکن‌های pending از JSON
+                all_pending = get_all_pending_tokens_from_json(chatid=chatid)
+                
+                if not all_pending:
+                    context.bot.send_message(
+                        chat_id=chatid,
+                        text="⚠️ هیچ اگهی pending برای نمایش وجود ندارد."
+                    )
+                    return
+                
+                # دریافت شماره‌های تلفن برای نمایش
+                phone_numbers = curd.get_phone_numbers_by_chatid(chatid=chatid)
+                # تبدیل به int برای تطابق
+                phone_dict = {int(phone): [] for phone in phone_numbers}
+                
+                # گروه‌بندی توکن‌ها بر اساس شماره تلفن
+                for phone, token in all_pending:
+                    phone_int = int(phone) if not isinstance(phone, int) else phone
+                    if phone_int in phone_dict:
+                        phone_dict[phone_int].append(token)
+                
+                # ساخت پیام با لینک کامل هر اگهی
+                message = "📋 <b>لیست اگهی‌های شما:</b>\n\n"
+                
+                total_count = 0
+                for phone, tokens in phone_dict.items():
+                    if tokens:
+                        message += f"📱 <b>شماره {phone}:</b>\n"
+                        for idx, token in enumerate(tokens, 1):
+                            ad_link = f"https://divar.ir/v/{token}"
+                            message += f"   {idx}. <a href='{ad_link}'>🔗 اگهی {token[:8]}...</a>\n"
+                        message += f"   <b>تعداد: {len(tokens)} اگهی</b>\n\n"
+                        total_count += len(tokens)
+                
+                message += f"━━━━━━━━━━━━━━━━\n"
+                message += f"📊 <b>جمع کل: {total_count} اگهی</b>"
+                
+                # اگر پیام خیلی طولانی است، آن را تقسیم کن
+                if len(message) > 4096:
+                    # تقسیم پیام به چند بخش
+                    parts = []
+                    current_part = "📋 <b>لیست اگهی‌های شما:</b>\n\n"
+                    
+                    for phone, tokens in phone_dict.items():
+                        if tokens:
+                            phone_section = f"📱 <b>شماره {phone}:</b>\n"
+                            for idx, token in enumerate(tokens, 1):
+                                ad_link = f"https://divar.ir/v/{token}"
+                                phone_section += f"   {idx}. <a href='{ad_link}'>🔗 اگهی {token[:8]}...</a>\n"
+                            phone_section += f"   <b>تعداد: {len(tokens)} اگهی</b>\n\n"
+                            
+                            if len(current_part) + len(phone_section) > 4000:
+                                parts.append(current_part)
+                                current_part = phone_section
+                            else:
+                                current_part += phone_section
+                    
+                    if current_part:
+                        current_part += f"━━━━━━━━━━━━━━━━\n"
+                        current_part += f"📊 <b>جمع کل: {total_count} اگهی</b>"
+                        parts.append(current_part)
+                    
+                    # ارسال هر بخش
+                    for part in parts:
+                        context.bot.send_message(
+                            chat_id=chatid,
+                            text=part,
+                            parse_mode='HTML',
+                            disable_web_page_preview=False
+                        )
+                else:
+                    context.bot.send_message(
+                        chat_id=chatid,
+                        text=message,
+                        parse_mode='HTML',
+                        disable_web_page_preview=False
+                    )
+                
+                print(f"✅ [listAds] لیست اگهی‌ها برای کاربر {chatid} ارسال شد ({total_count} اگهی)")
+            except Exception as e:
+                print(f"❌ [listAds] خطا در نمایش لیست اگهی‌ها: {e}")
+                import traceback
+                traceback.print_exc()
+                try:
+                    context.bot.send_message(
+                        chat_id=chatid,
+                        text="❌ خطا در نمایش لیست اگهی‌ها."
+                    )
+                except:
+                    pass
         elif data == "reExtract":
             # استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال
             qry.answer(text="در حال استخراج مجدد اگهی‌ها...", show_alert=False)

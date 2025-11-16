@@ -51,7 +51,7 @@ def load_tokens_json():
         return {}
 
 def save_tokens_json(tokens_data):
-    """ذخیره توکن‌ها در فایل JSON"""
+    """ذخیره توکن‌ها در فایل JSON - اگر فایل وجود نداشت، ایجاد می‌شود"""
     try:
         # تبدیل کلیدهای int به string برای JSON
         data = {}
@@ -64,15 +64,24 @@ def save_tokens_json(tokens_data):
         if not data:
             data = {}
         
-        # ایجاد فایل JSON (حتی اگر خالی باشد)
+        # ایجاد فایل JSON (حتی اگر خالی باشد) - اگر وجود نداشت، خودکار ایجاد می‌شود
         with open(TOKENS_JSON_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         
-        print(f"✅ فایل {TOKENS_JSON_FILE} با موفقیت ذخیره شد.")
+        # بررسی اینکه فایل واقعاً ایجاد شده است
+        if os.path.exists(TOKENS_JSON_FILE):
+            print(f"✅ فایل {TOKENS_JSON_FILE} با موفقیت ذخیره شد.")
+        else:
+            print(f"⚠️ فایل {TOKENS_JSON_FILE} ایجاد نشد!")
     except Exception as e:
         print(f"❌ خطا در ذخیره tokens.json: {e}")
         import traceback
         traceback.print_exc()
+        # در صورت خطا، سعی کن فایل خالی ایجاد کنی
+        try:
+            _create_empty_json_file()
+        except:
+            pass
 
 def add_tokens_to_json(chatid, phone, tokens):
     """اضافه کردن توکن‌ها به JSON"""
@@ -108,33 +117,37 @@ def add_tokens_to_json(chatid, phone, tokens):
         return 0
 
 def remove_token_from_json(chatid, phone, token):
-    """حذف یک توکن از JSON بعد از نردبان موفق"""
-    tokens_data = load_tokens_json()
-    
-    if chatid in tokens_data and phone in tokens_data[chatid]:
-        if token in tokens_data[chatid][phone]:
-            tokens_data[chatid][phone].remove(token)
-            # اگر لیست توکن‌ها خالی شد، آن را حذف کن
-            if not tokens_data[chatid][phone]:
-                del tokens_data[chatid][phone]
-            # اگر لیست شماره‌ها خالی شد، آن را حذف کن
-            if not tokens_data[chatid]:
-                del tokens_data[chatid]
-            
-            save_tokens_json(tokens_data)
-            return True
-    return False
+    """حذف یک توکن از JSON بعد از نردبان موفق - اگر فایل وجود نداشت، ایجاد می‌شود"""
+    try:
+        tokens_data = load_tokens_json()  # این تابع خودش فایل را ایجاد می‌کند اگر وجود نداشته باشد
+        
+        if chatid in tokens_data and phone in tokens_data[chatid]:
+            if token in tokens_data[chatid][phone]:
+                tokens_data[chatid][phone].remove(token)
+                # اگر لیست توکن‌ها خالی شد، آن را حذف کن
+                if not tokens_data[chatid][phone]:
+                    del tokens_data[chatid][phone]
+                # اگر لیست شماره‌ها خالی شد، آن را حذف کن
+                if not tokens_data[chatid]:
+                    del tokens_data[chatid]
+                
+                save_tokens_json(tokens_data)
+                return True
+        return False
+    except Exception as e:
+        print(f"❌ خطا در حذف توکن از JSON: {e}")
+        return False
 
 def get_tokens_from_json(chatid, phone):
-    """دریافت توکن‌ها از JSON"""
-    tokens_data = load_tokens_json()
+    """دریافت توکن‌ها از JSON - اگر فایل وجود نداشت، ایجاد می‌شود"""
+    tokens_data = load_tokens_json()  # این تابع خودش فایل را ایجاد می‌کند اگر وجود نداشته باشد
     if chatid in tokens_data and phone in tokens_data[chatid]:
         return tokens_data[chatid][phone]
     return []
 
 def get_all_pending_tokens_from_json(chatid):
-    """دریافت تمام توکن‌های pending از JSON"""
-    tokens_data = load_tokens_json()
+    """دریافت تمام توکن‌های pending از JSON - اگر فایل وجود نداشت، ایجاد می‌شود"""
+    tokens_data = load_tokens_json()  # این تابع خودش فایل را ایجاد می‌کند اگر وجود نداشته باشد
     if chatid not in tokens_data:
         return []
     
@@ -145,8 +158,8 @@ def get_all_pending_tokens_from_json(chatid):
     return all_pending
 
 def has_pending_tokens_in_json(chatid):
-    """بررسی اینکه آیا توکن pending در JSON وجود دارد"""
-    tokens_data = load_tokens_json()
+    """بررسی اینکه آیا توکن pending در JSON وجود دارد - اگر فایل وجود نداشت، ایجاد می‌شود"""
+    tokens_data = load_tokens_json()  # این تابع خودش فایل را ایجاد می‌کند اگر وجود نداشته باشد
     if chatid not in tokens_data:
         return False
     
