@@ -40,8 +40,16 @@ from tokens_manager import (
     remove_token_from_json,
     get_tokens_from_json,
     get_all_pending_tokens_from_json,
-    has_pending_tokens_in_json
+    has_pending_tokens_in_json,
+    load_tokens_json
 )
+
+# ایجاد فایل JSON در صورت عدم وجود
+try:
+    load_tokens_json()  # این تابع خودش فایل را ایجاد می‌کند اگر وجود نداشته باشد
+    print("✅ فایل tokens.json آماده است.")
+except Exception as e:
+    print(f"⚠️ خطا در ایجاد فایل tokens.json: {e}")
 # ==================== پایان مدیریت توکن‌ها در فایل JSON ====================
 
 # Initialize configuration and database

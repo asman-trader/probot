@@ -8,6 +8,20 @@ import os
 
 TOKENS_JSON_FILE = "tokens.json"
 
+def _create_empty_json_file():
+    """ایجاد فایل JSON خالی"""
+    try:
+        data = {}
+        with open(TOKENS_JSON_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"✅ فایل {TOKENS_JSON_FILE} ایجاد شد.")
+        return True
+    except Exception as e:
+        print(f"❌ خطا در ایجاد فایل {TOKENS_JSON_FILE}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def load_tokens_json():
     """بارگذاری توکن‌ها از فایل JSON"""
     try:
@@ -23,9 +37,17 @@ def load_tokens_json():
                         phone_int = int(phone_str)
                         result[chatid_int][phone_int] = tokens
                 return result
-        return {}
+        else:
+            # اگر فایل وجود ندارد، یک فایل خالی ایجاد کن
+            print(f"ℹ️ فایل {TOKENS_JSON_FILE} وجود ندارد. فایل خالی ایجاد می‌شود.")
+            _create_empty_json_file()
+            return {}
     except Exception as e:
         print(f"❌ خطا در بارگذاری tokens.json: {e}")
+        import traceback
+        traceback.print_exc()
+        # در صورت خطا، یک فایل خالی ایجاد کن
+        _create_empty_json_file()
         return {}
 
 def save_tokens_json(tokens_data):
@@ -38,28 +60,52 @@ def save_tokens_json(tokens_data):
             for phone, tokens in phones.items():
                 data[str(chatid)][str(phone)] = tokens
         
+        # اگر data خالی است، یک ساختار خالی ایجاد کن
+        if not data:
+            data = {}
+        
+        # ایجاد فایل JSON (حتی اگر خالی باشد)
         with open(TOKENS_JSON_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        print(f"✅ فایل {TOKENS_JSON_FILE} با موفقیت ذخیره شد.")
     except Exception as e:
         print(f"❌ خطا در ذخیره tokens.json: {e}")
+        import traceback
+        traceback.print_exc()
 
 def add_tokens_to_json(chatid, phone, tokens):
     """اضافه کردن توکن‌ها به JSON"""
-    tokens_data = load_tokens_json()
-    
-    if chatid not in tokens_data:
-        tokens_data[chatid] = {}
-    
-    if phone not in tokens_data[chatid]:
-        tokens_data[chatid][phone] = []
-    
-    # اضافه کردن فقط توکن‌های جدید (غیر تکراری)
-    existing = set(tokens_data[chatid][phone])
-    new_tokens = [t for t in tokens if t not in existing]
-    tokens_data[chatid][phone].extend(new_tokens)
-    
-    save_tokens_json(tokens_data)
-    return len(new_tokens)
+    try:
+        print(f"📝 [add_tokens_to_json] شروع: chatid={chatid}, phone={phone}, تعداد توکن‌ها={len(tokens)}")
+        
+        tokens_data = load_tokens_json()
+        print(f"📝 [add_tokens_to_json] داده‌های موجود: {len(tokens_data)} chatid")
+        
+        if chatid not in tokens_data:
+            tokens_data[chatid] = {}
+            print(f"📝 [add_tokens_to_json] chatid جدید اضافه شد: {chatid}")
+        
+        if phone not in tokens_data[chatid]:
+            tokens_data[chatid][phone] = []
+            print(f"📝 [add_tokens_to_json] phone جدید اضافه شد: {phone}")
+        
+        # اضافه کردن فقط توکن‌های جدید (غیر تکراری)
+        existing = set(tokens_data[chatid][phone])
+        new_tokens = [t for t in tokens if t not in existing]
+        tokens_data[chatid][phone].extend(new_tokens)
+        
+        print(f"📝 [add_tokens_to_json] {len(new_tokens)} توکن جدید اضافه شد (از {len(tokens)} توکن)")
+        
+        save_tokens_json(tokens_data)
+        print(f"✅ [add_tokens_to_json] توکن‌ها با موفقیت ذخیره شدند")
+        
+        return len(new_tokens)
+    except Exception as e:
+        print(f"❌ [add_tokens_to_json] خطا: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0
 
 def remove_token_from_json(chatid, phone, token):
     """حذف یک توکن از JSON بعد از نردبان موفق"""
