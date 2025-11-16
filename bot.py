@@ -495,11 +495,6 @@ def qrycall(update: Update, context: CallbackContext):
             stats_msg += f"   📦 کل استخراج شده: {stats['total_tokens']}\n"
             stats_msg += f"   ⏳ در انتظار: {stats['total_pending']}"
             
-            try:
-                qry.answer()  # پاسخ سریع به callback
-            except Exception as e:
-                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-            
             # ساخت منوی فرعی برای آمار
             stats_menu_buttons = [
                 [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
@@ -508,28 +503,67 @@ def qrycall(update: Update, context: CallbackContext):
             
             # ساخت InlineKeyboardMarkup
             keyboard_markup = InlineKeyboardMarkup(stats_menu_buttons)
+            print(f"🔍 [stats_info] InlineKeyboardMarkup ساخته شد با {len(stats_menu_buttons)} ردیف دکمه")
+            print(f"🔍 [stats_info] دکمه 1: {stats_menu_buttons[0][0].text} - callback_data: {stats_menu_buttons[0][0].callback_data}")
+            print(f"🔍 [stats_info] دکمه 2: {stats_menu_buttons[1][0].text} - callback_data: {stats_menu_buttons[1][0].callback_data}")
+            print(f"🔍 [stats_info] keyboard_markup type: {type(keyboard_markup)}")
+            print(f"🔍 [stats_info] keyboard_markup.inline_keyboard: {keyboard_markup.inline_keyboard}")
+            print(f"🔍 [stats_info] طول پیام آمار: {len(stats_msg)} کاراکتر")
+            
+            # پاسخ به callback (فقط یک بار)
+            try:
+                qry.answer()  # پاسخ به callback
+                print(f"✅ [stats_info] پاسخ callback با موفقیت ارسال شد")
+            except Exception as e:
+                print(f"⚠️ [stats_info] خطا در پاسخ به callback: {e}")
             
             # ویرایش پیام منو به پیام آمار با دکمه‌ها
             try:
-                qry.edit_message_text(
+                print(f"🔍 [stats_info] در حال ویرایش پیام با reply_markup...")
+                print(f"🔍 [stats_info] qry.message موجود است: {qry.message is not None}")
+                if qry.message:
+                    print(f"🔍 [stats_info] qry.message.message_id: {qry.message.message_id}")
+                    print(f"🔍 [stats_info] qry.message.chat.id: {qry.message.chat.id}")
+                
+                # استفاده از context.bot.edit_message_text برای اطمینان از کارکرد صحیح
+                edited_message = context.bot.edit_message_text(
+                    chat_id=chatid,
+                    message_id=qry.message.message_id,
                     text=stats_msg,
                     parse_mode='HTML',
                     reply_markup=keyboard_markup
                 )
                 print(f"✅ [stats_info] پیام آمار با دکمه‌ها برای کاربر {chatid} ویرایش شد")
+                print(f"🔍 [stats_info] edited_message.reply_markup موجود است: {edited_message.reply_markup is not None if edited_message else False}")
+                if edited_message and edited_message.reply_markup:
+                    print(f"🔍 [stats_info] تعداد دکمه‌ها در reply_markup: {len(edited_message.reply_markup.inline_keyboard)}")
+                    for i, row in enumerate(edited_message.reply_markup.inline_keyboard):
+                        print(f"🔍 [stats_info] ردیف {i+1}: {len(row)} دکمه")
+                        for j, btn in enumerate(row):
+                            print(f"🔍 [stats_info]   دکمه {j+1}: {btn.text} - {btn.callback_data}")
             except Exception as e:
                 print(f"⚠️ [stats_info] خطا در ویرایش پیام: {e}")
+                import traceback
+                traceback.print_exc()
                 # اگر ویرایش موفق نبود، پیام جدید ارسال کن
                 try:
-                    context.bot.send_message(
-                        chat_id=chatid, 
-                        text=stats_msg, 
+                    print(f"🔍 [stats_info] تلاش برای ارسال پیام جدید...")
+                    result = context.bot.send_message(
+                        chat_id=chatid,
+                        text=stats_msg,
                         parse_mode='HTML',
                         reply_markup=keyboard_markup
                     )
-                    print(f"✅ [stats_info] پیام آمار جدید با دکمه‌ها برای کاربر {chatid} ارسال شد")
+                    print(f"✅ [stats_info] پیام آمار جدید با دکمه‌ها برای کاربر {chatid} ارسال شد. Message ID: {result.message_id}")
+                    print(f"🔍 [stats_info] result.reply_markup موجود است: {result.reply_markup is not None}")
+                    if result.reply_markup:
+                        print(f"🔍 [stats_info] تعداد دکمه‌ها در reply_markup: {len(result.reply_markup.inline_keyboard)}")
+                        for i, row in enumerate(result.reply_markup.inline_keyboard):
+                            print(f"🔍 [stats_info] ردیف {i+1}: {len(row)} دکمه")
+                            for j, btn in enumerate(row):
+                                print(f"🔍 [stats_info]   دکمه {j+1}: {btn.text} - {btn.callback_data}")
                 except Exception as e2:
-                    print(f"❌ [stats_info] خطا در ارسال پیام: {e2}")
+                    print(f"❌ [stats_info] خطا در ارسال پیام جدید: {e2}")
                     import traceback
                     traceback.print_exc()
         elif data == "listAds":
