@@ -506,47 +506,27 @@ def qrycall(update: Update, context: CallbackContext):
                 [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
             ]
             
-            context.bot.send_message(
-                chat_id=chatid, 
-                text=stats_msg, 
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup(stats_menu_buttons)
-            )
-            
-            # به‌روزرسانی منو با آمار جدید
+            # ویرایش پیام منو به جای ارسال پیام جدید
             try:
-                mngDetail = curd.getManage(chatid=chatid)
-                if mngDetail[0] == 0:
-                    botStatus = ["✅ روشن کردن ربات ✅", "setactive:1"]
-                else:
-                    botStatus = ["❌ خاموش کردن ربات ❌", "setactive:0"]
-                
-                # دریافت آمار به‌روز شده برای منو
-                updated_stats = curd.getStats(chatid=chatid)
-                updated_stats_text = f"📊 نردبان: {updated_stats['total_nardeban']} | کل: {updated_stats['total_tokens']} | انتظار: {updated_stats['total_pending']}"
-                
-                # تعیین نوع نردبان فعلی
-                nardeban_type = mngDetail[3] if len(mngDetail) > 3 else 1
-                type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
-                type_name = type_names.get(nardeban_type, "ترتیبی کامل")
-                
-                btns = [
-                    [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
-                    [InlineKeyboardButton(updated_stats_text, callback_data='stats_info')],
-                    [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
-                    [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
-                    [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
-                    [InlineKeyboardButton('🔄 استخراج مجدد اگهی‌ها', callback_data='reExtract')],
-                    [InlineKeyboardButton('غیر فعال کردن نردبان', callback_data='remJob')],
-                ]
-                if int(chatid) == int(Datas.admin):
-                    btns.append([InlineKeyboardButton('مدیریت ادمین ها',callback_data='manageAdmins')])
-                
-                # به‌روزرسانی منو
-                qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(btns))
-                print(f"✅ [stats_info] منو با آمار به‌روز برای کاربر {chatid} به‌روزرسانی شد")
+                qry.edit_message_text(
+                    text=stats_msg,
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup(stats_menu_buttons)
+                )
+                print(f"✅ [stats_info] پیام آمار با دکمه‌ها برای کاربر {chatid} نمایش داده شد")
             except Exception as e:
-                print(f"⚠️ [stats_info] خطا در به‌روزرسانی منو: {e}")
+                print(f"⚠️ [stats_info] خطا در ویرایش پیام: {e}")
+                # اگر ویرایش پیام موفق نبود، پیام جدید ارسال کن
+                try:
+                    context.bot.send_message(
+                        chat_id=chatid, 
+                        text=stats_msg, 
+                        parse_mode='HTML',
+                        reply_markup=InlineKeyboardMarkup(stats_menu_buttons)
+                    )
+                    print(f"✅ [stats_info] پیام آمار جدید برای کاربر {chatid} ارسال شد")
+                except Exception as e2:
+                    print(f"❌ [stats_info] خطا در ارسال پیام: {e2}")
         elif data == "listAds":
             # نمایش لیست اگهی‌ها با لینک کامل
             try:
