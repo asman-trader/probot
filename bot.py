@@ -735,32 +735,40 @@ def qrycall(update: Update, context: CallbackContext):
             else:
                 curd.setStatusManage(q="active", v=0, chatid=chatid)
             
-            # ساخت keyboard جدید به جای تغییر دادن keyboard موجود
-            old_keyboard = qry.message.reply_markup.inline_keyboard
-            new_keyboard = []
-            for row in old_keyboard:
-                new_row = []
-                for button in row:
-                    button_text = button.text
-                    button_callback = button.callback_data
-                    
-                    # تغییر دکمه setactive
-                    if "setactive" in str(button_callback):
-                        if "خاموش" in button_text:
-                            button_text = "✅ روشن کردن ربات ✅"
-                            button_callback = "setactive:1"
-                        elif "روشن" in button_text:
-                            button_text = "❌ خاموش کردن ربات ❌"
-                            button_callback = "setactive:0"
-                    
-                    new_row.append(InlineKeyboardButton(button_text, callback_data=button_callback))
-                new_keyboard.append(new_row)
+            # ساخت منو جدید از ابتدا (نه از keyboard موجود)
+            mngDetail = curd.getManage(chatid=chatid)
+            if mngDetail[0] == 0:
+                botStatus = ["✅ روشن کردن ربات ✅", "setactive:1"]
+            else:
+                botStatus = ["❌ خاموش کردن ربات ❌", "setactive:0"]
+            
+            # دریافت آمار به‌روز شده
+            stats = curd.getStats(chatid=chatid)
+            stats_text = f"📊 نردبان: {stats['total_nardeban']} | کل: {stats['total_tokens']} | انتظار: {stats['total_pending']}"
+            
+            # تعیین نوع نردبان فعلی
+            nardeban_type = mngDetail[3] if len(mngDetail) > 3 else 1
+            type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
+            type_name = type_names.get(nardeban_type, "ترتیبی کامل")
+            
+            btns = [
+                [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
+                [InlineKeyboardButton(stats_text, callback_data='stats_info')],
+                [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
+                [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
+                [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
+                [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
+                [InlineKeyboardButton('🔄 استخراج مجدد اگهی‌ها', callback_data='reExtract')],
+                [InlineKeyboardButton('غیر فعال کردن نردبان', callback_data='remJob')],
+            ]
+            if int(chatid) == int(Datas.admin):
+                btns.append([InlineKeyboardButton('مدیریت ادمین ها',callback_data='manageAdmins')])
             
             try:
                 qry.answer()  # پاسخ به callback
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-            qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
+            qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(btns))
         elif data.startswith("delAdmin"):
             # فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند
             admin_int = int(Datas.admin) if Datas.admin is not None else None
