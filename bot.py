@@ -407,7 +407,10 @@ def qrycall(update: Update, context: CallbackContext):
         if not is_admin:
             print(f"❌ [qrycall] کاربر {chatid} ادمین نیست - فقط پاسخ callback (بدون پیام خطا)")
             # فقط پاسخ callback بده، بدون نمایش alert
-            qry.answer()
+            try:
+                qry.answer()
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             return
         print(f"✅ [qrycall] کاربر {chatid} ادمین است - ادامه پردازش")
         
@@ -436,7 +439,10 @@ def qrycall(update: Update, context: CallbackContext):
             stats_msg += f"   📦 کل استخراج شده: {stats['total_tokens']}\n"
             stats_msg += f"   ⏳ در انتظار: {stats['total_pending']}"
             
-            qry.answer()  # پاسخ سریع به callback
+            try:
+                qry.answer()  # پاسخ سریع به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             context.bot.send_message(chat_id=chatid, text=stats_msg, parse_mode='HTML')
         elif data == "reExtract":
             # استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال
@@ -455,7 +461,10 @@ def qrycall(update: Update, context: CallbackContext):
                 [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
             ]
             
-            qry.answer()
+            try:
+                qry.answer()
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             context.bot.send_message(
                 chat_id=chatid,
                 text="⚙️ <b>انتخاب نوع نردبان:</b>\n\n"
@@ -482,7 +491,10 @@ def qrycall(update: Update, context: CallbackContext):
             # بازگشت به منو
             start(update, context)
         elif data == "backToMenu":
-            qry.answer()
+            try:
+                qry.answer()
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             start(update, context)
         elif data == "manageAdmins":
             # فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند
@@ -518,7 +530,10 @@ def qrycall(update: Update, context: CallbackContext):
                         )
             
             if newKeyAdmins:
-                qry.answer()  # پاسخ به callback
+                try:
+                    qry.answer()  # پاسخ به callback
+                except Exception as e:
+                    print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
                 qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(newKeyAdmins))
             else:
                 qry.answer(text="هیچ ادمینی وجود ندارد .", show_alert=True)
@@ -550,7 +565,10 @@ def qrycall(update: Update, context: CallbackContext):
                     new_row.append(InlineKeyboardButton(button_text, callback_data=button_callback))
                 new_keyboard.append(new_row)
             
-            qry.answer()  # پاسخ به callback
+            try:
+                qry.answer()  # پاسخ به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
         elif data.startswith("delAdmin"):
             # فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند
@@ -598,7 +616,10 @@ def qrycall(update: Update, context: CallbackContext):
             else:
                 qry.answer(text="مشکلی در حذف شدن وحود دارد")
         elif data.startswith("update"):
-            qry.answer()  # پاسخ به callback
+            try:
+                qry.answer()  # پاسخ به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             phoneL = data.split(":")[1]
             curd.setStatus(q="slogin", v=phoneL, chatid=chatid)
             divarApi.login(phone=phoneL)
@@ -606,12 +627,18 @@ def qrycall(update: Update, context: CallbackContext):
             txt = f"🔎 کد با موفقیت به شماره <code>{str(phoneL)}</code>ارسال شد ، لطفا کد را ارسال کنید :  ✅"
             context.bot.send_message(chat_id=qry.message.chat.id, text=txt, parse_mode='HTML')
         elif data == "setlimit":
-            qry.answer()  # پاسخ به callback
+            try:
+                qry.answer()  # پاسخ به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             curd.setStatus(q="slimit", v=1, chatid=chatid)
             context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                              text="🤠 لطفاً یک عدد برای تعیین سقف مجاز تعداد اگهی نردبان روازنه ارسال کنید : ")
         elif data == "managelogin":
-            qry.answer()  # پاسخ به callback
+            try:
+                qry.answer()  # پاسخ به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             txt = "🗣 لیست لاگین های شما : "
             logins = curd.getLogins(chatid=chatid)
             keyAdd = [InlineKeyboardButton('➕ اضافه کردن لاگین جدید ', callback_data='addlogin')]
@@ -636,7 +663,10 @@ def qrycall(update: Update, context: CallbackContext):
                 key.append(keyAdd)
                 context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key))
         elif data == "addlogin":
-            qry.answer()  # پاسخ به callback
+            try:
+                qry.answer()  # پاسخ به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             curd.setStatus(q="slogin", v=1, chatid=chatid)
             context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                              text="🤠 لطفاً شماره لاگین را وارد نمایید : ")
@@ -651,7 +681,10 @@ def qrycall(update: Update, context: CallbackContext):
                 else:
                     txtResult = f"عملیات نردبان با آیدی {str(job_id)} با موفقیت غیرفعال سازی شد ."
                     curd.removeJob(chatid=chatid)
-                qry.answer()  # پاسخ به callback
+                try:
+                    qry.answer()  # پاسخ به callback
+                except Exception as e:
+                    print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
                 context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                                  text=txtResult)
             else:
@@ -686,14 +719,20 @@ def qrycall(update: Update, context: CallbackContext):
         else:
             # اگر هیچ callback match نکرد، فقط پاسخ بده (بدون پیام خطا)
             print(f"⚠️ [qrycall] هیچ handler برای data={data} پیدا نشد")
-            qry.answer()
+            try:
+                qry.answer()
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
     except Exception as e:
         print(f"❌ [qrycall] خطا در پردازش callback query: {e}")
         import traceback
         traceback.print_exc()
+        # سعی نکن callback query قدیمی را answer کنی
         try:
             if update.callback_query:
-                update.callback_query.answer()
+                # فقط اگر خطا BadRequest نبود، answer کن
+                if "too old" not in str(e).lower() and "timeout" not in str(e).lower():
+                    update.callback_query.answer()
         except:
             pass
 
