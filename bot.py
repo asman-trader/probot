@@ -391,6 +391,7 @@ def mainMenu(update: Update, context: CallbackContext):
             pass
 
 def qrycall(update: Update, context: CallbackContext):
+    print(f"🔍 [qrycall] تابع qrycall فراخوانی شد")
     try:
         qry: CallbackQuery = update.callback_query
         if not qry:
