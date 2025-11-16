@@ -299,7 +299,6 @@ def start(update: Update, context: CallbackContext):
             btns = [
                 [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
                 [InlineKeyboardButton(stats_text, callback_data='stats_info')],
-                [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
                 [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
                 [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
                 [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
@@ -500,7 +499,19 @@ def qrycall(update: Update, context: CallbackContext):
                 qry.answer()  # پاسخ سریع به callback
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-            context.bot.send_message(chat_id=chatid, text=stats_msg, parse_mode='HTML')
+            
+            # ساخت منوی فرعی برای آمار
+            stats_menu_buttons = [
+                [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
+                [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
+            ]
+            
+            context.bot.send_message(
+                chat_id=chatid, 
+                text=stats_msg, 
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(stats_menu_buttons)
+            )
             
             # به‌روزرسانی منو با آمار جدید
             try:
@@ -522,7 +533,6 @@ def qrycall(update: Update, context: CallbackContext):
                 btns = [
                     [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
                     [InlineKeyboardButton(updated_stats_text, callback_data='stats_info')],
-                    [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
                     [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
                     [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
                     [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
@@ -754,7 +764,6 @@ def qrycall(update: Update, context: CallbackContext):
             btns = [
                 [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
                 [InlineKeyboardButton(stats_text, callback_data='stats_info')],
-                [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
                 [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
                 [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
                 [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
