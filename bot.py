@@ -506,27 +506,32 @@ def qrycall(update: Update, context: CallbackContext):
                 [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
             ]
             
-            # ویرایش پیام منو به جای ارسال پیام جدید
+            # ساخت InlineKeyboardMarkup
+            keyboard_markup = InlineKeyboardMarkup(stats_menu_buttons)
+            
+            # ویرایش پیام منو به پیام آمار با دکمه‌ها
             try:
                 qry.edit_message_text(
                     text=stats_msg,
                     parse_mode='HTML',
-                    reply_markup=InlineKeyboardMarkup(stats_menu_buttons)
+                    reply_markup=keyboard_markup
                 )
-                print(f"✅ [stats_info] پیام آمار با دکمه‌ها برای کاربر {chatid} نمایش داده شد")
+                print(f"✅ [stats_info] پیام آمار با دکمه‌ها برای کاربر {chatid} ویرایش شد")
             except Exception as e:
                 print(f"⚠️ [stats_info] خطا در ویرایش پیام: {e}")
-                # اگر ویرایش پیام موفق نبود، پیام جدید ارسال کن
+                # اگر ویرایش موفق نبود، پیام جدید ارسال کن
                 try:
                     context.bot.send_message(
                         chat_id=chatid, 
                         text=stats_msg, 
                         parse_mode='HTML',
-                        reply_markup=InlineKeyboardMarkup(stats_menu_buttons)
+                        reply_markup=keyboard_markup
                     )
-                    print(f"✅ [stats_info] پیام آمار جدید برای کاربر {chatid} ارسال شد")
+                    print(f"✅ [stats_info] پیام آمار جدید با دکمه‌ها برای کاربر {chatid} ارسال شد")
                 except Exception as e2:
                     print(f"❌ [stats_info] خطا در ارسال پیام: {e2}")
+                    import traceback
+                    traceback.print_exc()
         elif data == "listAds":
             # نمایش لیست اگهی‌ها با لینک کامل
             try:
