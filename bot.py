@@ -822,48 +822,77 @@ def startNardebanDasti(sch, chatid, end: int):
     else:
         updater.bot.send_message(chat_id=chatid, text="تمامی لاگین‌های شما غیرفعال است و نمی‌توانم نردبانی انجام دهم!")
 
-def ensureTokensExtracted(chatid, available_logins):
-    """بررسی و استخراج توکن‌ها در صورت نبودن"""
+def shouldExtractTokens(chatid, available_logins):
+    """بررسی می‌کند که آیا باید استخراج انجام شود یا نه
+    فقط زمانی استخراج انجام می‌شود که:
+    1. هیچ توکن pending وجود نداشته باشد
+    2. حداقل یک توکن نردبان شده (success) وجود داشته باشد
+    """
     try:
         # چک کردن اینکه آیا توکن pending وجود دارد
         all_pending = curd.get_all_pending_tokens(chatid=chatid)
         
-        if not all_pending:
-            # اگر توکن pending وجود نداشت، استخراج کن
-            updater.bot.send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending یافت نشد. در حال استخراج...")
-            
-            for l in available_logins:
-                try:
-                    nardebanAPI = nardeban(apiKey=l[1])
-                    brandToken = nardebanAPI.getBranToken()
-                    
-                    if not brandToken:
-                        updater.bot.send_message(chat_id=chatid, 
-                                         text=f"❌ خطا در دریافت brand token برای شماره {l[0]}")
-                        continue
-                    
-                    # استخراج توکن‌های جدید
-                    tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
-                    
-                    if tokens:
-                        # حذف توکن‌های قدیمی
-                        curd.delete_tokens_by_phone(phone=l[0])
-                        # اضافه کردن توکن‌های جدید
-                        curd.insert_tokens_by_phone(phone=int(l[0]), tokens=tokens)
-                        updater.bot.send_message(chat_id=chatid,
-                                         text=f"✅ از شماره {l[0]}: {len(tokens)} اگهی استخراج شد.")
-                    else:
-                        updater.bot.send_message(chat_id=chatid,
-                                         text=f"⚠️ از شماره {l[0]}: هیچ اگهی‌ای یافت نشد.")
-                        
-                except Exception as e:
-                    print(f"Error extracting tokens for phone {l[0]}: {e}")
-                    updater.bot.send_message(chat_id=chatid,
-                                     text=f"❌ خطا در استخراج برای شماره {l[0]}: {str(e)}")
-            
-            updater.bot.send_message(chat_id=chatid, text="✅ استخراج اگهی‌ها به پایان رسید.")
+        # اگر توکن pending وجود دارد، نیازی به استخراج نیست
+        if all_pending:
+            return False
+        
+        # بررسی اینکه آیا حداقل یک توکن نردبان شده (success) وجود دارد
+        # استفاده از getStats برای بررسی تعداد نردبان شده
+        stats = curd.getStats(chatid=chatid)
+        
+        # اگر حداقل یک نردبان انجام شده باشد، یعنی قبلاً نردبانی انجام شده
+        if stats['total_nardeban'] > 0:
+            # همه اگهی‌ها نردبان شده‌اند (چون pending = 0 و nardeban > 0)
+            return True
+        
+        # اگر هیچ نردبانی انجام نشده، استخراج نکن
+        return False
     except Exception as e:
-        print(f"Error in ensureTokensExtracted: {e}")
+        print(f"Error in shouldExtractTokens: {e}")
+        return False
+
+def extractTokensIfNeeded(chatid, available_logins):
+    """استخراج توکن‌ها فقط در صورتی که همه اگهی‌ها نردبان شده باشند"""
+    try:
+        # بررسی اینکه آیا باید استخراج انجام شود
+        if not shouldExtractTokens(chatid, available_logins):
+            return
+        
+        # همه اگهی‌ها نردبان شده‌اند، حالا استخراج کن
+        updater.bot.send_message(chat_id=chatid, text="✅ همه اگهی‌ها نردبان شدند. در حال استخراج مجدد...")
+        
+        for l in available_logins:
+            try:
+                nardebanAPI = nardeban(apiKey=l[1])
+                brandToken = nardebanAPI.getBranToken()
+                
+                if not brandToken:
+                    updater.bot.send_message(chat_id=chatid, 
+                                     text=f"❌ خطا در دریافت brand token برای شماره {l[0]}")
+                    continue
+                
+                # استخراج توکن‌های جدید
+                tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
+                
+                if tokens:
+                    # حذف توکن‌های قدیمی
+                    curd.delete_tokens_by_phone(phone=l[0])
+                    # اضافه کردن توکن‌های جدید
+                    curd.insert_tokens_by_phone(phone=int(l[0]), tokens=tokens)
+                    updater.bot.send_message(chat_id=chatid,
+                                     text=f"✅ از شماره {l[0]}: {len(tokens)} اگهی استخراج شد.")
+                else:
+                    updater.bot.send_message(chat_id=chatid,
+                                     text=f"⚠️ از شماره {l[0]}: هیچ اگهی‌ای یافت نشد.")
+                    
+            except Exception as e:
+                print(f"Error extracting tokens for phone {l[0]}: {e}")
+                updater.bot.send_message(chat_id=chatid,
+                                 text=f"❌ خطا در استخراج برای شماره {l[0]}: {str(e)}")
+        
+        updater.bot.send_message(chat_id=chatid, text="✅ استخراج اگهی‌ها به پایان رسید.")
+    except Exception as e:
+        print(f"Error in extractTokensIfNeeded: {e}")
 
 def sendNardeban(chatid):
     try:
@@ -882,8 +911,8 @@ def sendNardeban(chatid):
             updater.bot.send_message(chat_id=chatid, text="تمام لاگین‌ها به سقف نردبان رسیده‌اند.")
             return
         
-        # بررسی و استخراج توکن‌ها در صورت نبودن
-        ensureTokensExtracted(chatid, available_logins)
+        # بررسی و استخراج توکن‌ها فقط در صورتی که همه اگهی‌ها نردبان شده باشند
+        extractTokensIfNeeded(chatid, available_logins)
         
         # نوع 1: ترتیبی کامل هر لاگین
         # رفتار: هر لاگین → همه آگهی‌هاش کامل نردبان می‌شود → بعد لاگین بعدی
@@ -892,18 +921,8 @@ def sendNardeban(chatid):
             for l in available_logins:
                 try:
                     nardebanAPI = nardeban(apiKey=l[1])
-                    # چک کردن اینکه آیا توکن برای این شماره وجود دارد یا نه
-                    if curd.check_tokens_by_phone(phone=int(l[0])) == 1:
-                        # اگر توکن وجود نداشت، استخراج کن
-                        brandToken = nardebanAPI.getBranToken()
-                        if brandToken:
-                            tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
-                            if tokens:
-                                curd.insert_tokens_by_phone(phone=int(l[0]), tokens=tokens)
-                                updater.bot.send_message(chat_id=chatid,
-                                             text=f"تعداد {str(len(tokens))} آکهی از شماره {str(l[0])} برای نردبان یافت و در دیتابیس ذخیره شد .")
-                    
                     # sendNardeban از آخر لیست توکن‌ها شروع می‌کند و اولین توکن pending را پیدا می‌کند
+                    # استخراج خودکار در ابتدای فرایند حذف شد - فقط زمانی استخراج می‌شود که همه اگهی‌ها نردبان شده باشند
                     result = nardebanAPI.sendNardeban(number=int(l[0]), chatid=chatid)
                     success = handleNardebanResult(result, l, chatid, nardebanAPI)
                     
@@ -922,8 +941,8 @@ def sendNardeban(chatid):
             all_pending = curd.get_all_pending_tokens(chatid=chatid)
             
             if not all_pending:
-                # اگر بعد از استخراج هم توکن pending وجود نداشت
-                updater.bot.send_message(chat_id=chatid, text="⚠️ بعد از استخراج هم هیچ اگهی pending برای نردبان وجود ندارد.")
+                # اگر توکن pending وجود نداشت
+                updater.bot.send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending برای نردبان وجود ندارد.")
                 return
             
             # انتخاب تصادفی یک توکن از بین همه توکن‌های pending
@@ -978,8 +997,8 @@ def sendNardeban(chatid):
                     break  # اولین لاگینی که توکن pending دارد را انتخاب می‌کنیم
             
             if not found or not selected_login or not selected_token:
-                # اگر بعد از استخراج هم توکن pending وجود نداشت
-                updater.bot.send_message(chat_id=chatid, text="⚠️ بعد از استخراج هم هیچ اگهی pending برای نردبان وجود ندارد.")
+                # اگر توکن pending وجود نداشت
+                updater.bot.send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending برای نردبان وجود ندارد.")
                 return
             
             try:
@@ -1003,8 +1022,8 @@ def sendNardeban(chatid):
             all_pending = curd.get_all_pending_tokens(chatid=chatid)
             
             if not all_pending:
-                # اگر بعد از استخراج هم توکن pending وجود نداشت
-                updater.bot.send_message(chat_id=chatid, text="⚠️ بعد از استخراج هم هیچ اگهی pending برای نردبان وجود ندارد.")
+                # اگر توکن pending وجود نداشت
+                updater.bot.send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending برای نردبان وجود ندارد.")
                 return
             
             # انتخاب آگهی بر اساس اولویت:
@@ -1181,13 +1200,15 @@ def reExtractTokens(chatid):
         updater.bot.send_message(chat_id=chatid, text=f"❌ خطا در فرآیند استخراج مجدد: {str(e)}")
 
 def refreshUsed(chatid):
+    """بازنشانی وضعیت استفاده شده - بدون حذف اگهی‌های استخراج شده"""
     curd.refreshUsed(chatid)
     curd.remSents(chatid)
     curd.removeJob(chatid=chatid)
     curd.setStatusManage(q="climit", v=0, chatid=chatid)
-    numbers = curd.get_phone_numbers_by_chatid(chatid=chatid)
-    for n in numbers:
-        curd.delete_tokens_by_phone(phone=n)
+    # حذف اگهی‌های استخراج شده حذف شد - اگهی‌ها باید باقی بمانند
+    # numbers = curd.get_phone_numbers_by_chatid(chatid=chatid)
+    # for n in numbers:
+    #     curd.delete_tokens_by_phone(phone=n)
 
 scheduler = BackgroundScheduler(timezone="Asia/Tehran")
 
