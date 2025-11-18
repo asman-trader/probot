@@ -970,6 +970,75 @@ def startNardebanDasti(sch, chatid, end: int):
     logins = curd.getCookies(chatid=chatid)
 
     if logins:
+        # بررسی اینکه آیا توکن‌های pending از فرایند قبلی وجود دارند
+        has_pending = has_pending_tokens_in_json(chatid=chatid)
+        
+        if has_pending:
+            # دریافت آمار توکن‌های pending
+            all_pending = get_all_pending_tokens_from_json(chatid=chatid)
+            total_pending = len(all_pending)
+            
+            # گروه‌بندی بر اساس شماره تلفن
+            pending_by_phone = {}
+            for phone, token in all_pending:
+                if phone not in pending_by_phone:
+                    pending_by_phone[phone] = []
+                pending_by_phone[phone].append(token)
+            
+            # ساخت پیام اطلاع‌رسانی
+            pending_info = f"📋 استخراج‌های فرایند قبلی یافت شد:\n\n"
+            for phone, tokens in pending_by_phone.items():
+                pending_info += f"📱 شماره {phone}: {len(tokens)} اگهی pending\n"
+            pending_info += f"\n✅ نردبان از ادامه اگهی‌های قبلی شروع می‌شود."
+            
+            updater.bot.send_message(chat_id=chatid, text=pending_info)
+        else:
+            # اگر توکن pending وجود ندارد، استخراج اولیه انجام می‌شود
+            updater.bot.send_message(chat_id=chatid, text="🔄 هیچ اگهی pending از فرایند قبلی یافت نشد. در حال استخراج اولیه...")
+            
+            # استخراج اولیه برای تمام لاگین‌ها
+            active_logins = [l for l in logins if l[2] == 0]  # فقط لاگین‌های فعال
+            if active_logins:
+                for l in active_logins:
+                    try:
+                        nardebanAPI = nardeban(apiKey=l[1])
+                        brandToken = nardebanAPI.getBranToken()
+                        
+                        if not brandToken:
+                            updater.bot.send_message(chat_id=chatid, 
+                                         text=f"❌ خطا در دریافت brand token برای شماره {l[0]}")
+                            continue
+                        
+                        # استخراج توکن‌های جدید
+                        tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
+                        
+                        if tokens:
+                            # ذخیره توکن‌ها در JSON
+                            new_count = add_tokens_to_json(chatid=chatid, phone=int(l[0]), tokens=tokens)
+                            
+                            if new_count > 0:
+                                # همچنین در دیتابیس هم ذخیره کن (برای سازگاری)
+                                existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
+                                new_tokens = [t for t in tokens if t not in existing_tokens]
+                                if new_tokens:
+                                    curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
+                                
+                                updater.bot.send_message(chat_id=chatid,
+                                                 text=f"✅ از شماره {l[0]}: {new_count} اگهی استخراج شد.")
+                            else:
+                                updater.bot.send_message(chat_id=chatid,
+                                                 text=f"ℹ️ از شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند.")
+                        else:
+                            updater.bot.send_message(chat_id=chatid,
+                                         text=f"⚠️ از شماره {l[0]}: هیچ اگهی‌ای یافت نشد.")
+                            
+                    except Exception as e:
+                        print(f"Error extracting tokens for phone {l[0]}: {e}")
+                        updater.bot.send_message(chat_id=chatid,
+                                 text=f"❌ خطا در استخراج برای شماره {l[0]}: {str(e)}")
+                
+                updater.bot.send_message(chat_id=chatid, text="✅ استخراج اولیه به پایان رسید.")
+        
         # محاسبه سقف نردبان برای هر لاگین
         total_nardeban = int(manageDetails[1])
         currentLimit = round(total_nardeban / len(logins))  # سقف نردبان هر لاگین
