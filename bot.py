@@ -920,7 +920,7 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند
             admin_int = int(Datas.admin) if Datas.admin is not None else None
             if chatid != admin_int:
-                qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند!", show_alert=True)
+                await qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند!", show_alert=True)
                 return
             
             adminsChatids = curd.getAdmins()
@@ -963,14 +963,14 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 admin_text += "🗣 = ادمین عادی\n"
                 admin_text += "❌ = حذف ادمین"
                 
-                context.bot.send_message(
+                await context.bot.send_message(
                     chat_id=chatid,
                     text=admin_text,
                     reply_markup=InlineKeyboardMarkup(newKeyAdmins),
                     parse_mode='HTML'
                 )
             else:
-                qry.answer(text="هیچ ادمینی وجود ندارد.", show_alert=True)
+                await qry.answer(text="هیچ ادمینی وجود ندارد.", show_alert=True)
         elif data.startswith("setactive"):
             value = data.split(":")[1]
             if value == "1":
@@ -981,7 +981,7 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_msg = "❌ ربات خاموش شد"
             
             try:
-                qry.answer(text=status_msg, show_alert=False)
+                await qry.answer(text=status_msg, show_alert=False)
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             
@@ -993,50 +993,50 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند
             admin_int = int(Datas.admin) if Datas.admin is not None else None
             if chatid != admin_int:
-                qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند!", show_alert=True)
+                await qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند!", show_alert=True)
                 return
             
             adminID = int(data.split(":")[1])
             # بررسی اینکه آیا این ادمین پیش‌فرض است یا نه
             if adminID == admin_int:
                 txtResult = "❌ نمی‌توانید ادمین پیش‌فرض را حذف کنید!"
-                qry.answer(text=txtResult, show_alert=True)
+                await qry.answer(text=txtResult, show_alert=True)
             else:
                 if curd.remAdmin(chatid=adminID) == 1:
                     txtResult = "کاربر مورد نظر با موفقیت از لیست ادمین ها حذف شد ."
                     try:
-                        context.bot.send_message(chat_id=adminID,
+                        await context.bot.send_message(chat_id=adminID,
                                          text="متاسفانه شما از لیست ادمین های ربات خارج شدید !")
                     except:
                         pass
                 else:
                     txtResult = "مشکلی در حذف کردن کاربر وجود دارد ."
-                qry.answer(text=txtResult, show_alert=True)
+                await qry.answer(text=txtResult, show_alert=True)
         elif data.startswith("admin"):
             # فقط ادمین پیش‌فرض می‌تواند ادمین اضافه کند
             admin_int = int(Datas.admin) if Datas.admin is not None else None
             if chatid != admin_int:
-                qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین اضافه کند!", show_alert=True)
+                await qry.answer(text="❌ فقط ادمین پیش‌فرض می‌تواند ادمین اضافه کند!", show_alert=True)
                 return
             
             newAdminChatID = int(data.split(":")[1])
             if curd.setAdmin(chatid=newAdminChatID) == 1:
                 txtResult = "کاربر مورد نظر با موفقیت به لیست ادمین ها اضافه شد ."
                 try:
-                    context.bot.send_message(chat_id=newAdminChatID, text="شما با موفقیت به لیست ادمین های ربات اضافه شدید برای فعال سازی لطفا /start را بزنید.")
+                    await context.bot.send_message(chat_id=newAdminChatID, text="شما با موفقیت به لیست ادمین های ربات اضافه شدید برای فعال سازی لطفا /start را بزنید.")
                 except:
                     pass
             else:
                 txtResult = "مشکلی در اضافه کردن کاربر وجود دارد ."
-            qry.answer(text=txtResult, show_alert=True)
+            await qry.answer(text=txtResult, show_alert=True)
         elif data.startswith("del"):
             if curd.delLogin(phone=data.split(":")[1]) == 1:
-                qry.answer(text="با موفقیت حذف شد")
+                await qry.answer(text="با موفقیت حذف شد")
             else:
-                qry.answer(text="مشکلی در حذف شدن وحود دارد")
+                await qry.answer(text="مشکلی در حذف شدن وحود دارد")
         elif data.startswith("update"):
             try:
-                qry.answer()  # پاسخ به callback
+                await qry.answer()  # پاسخ به callback
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             phoneL = data.split(":")[1]
@@ -1044,18 +1044,18 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             divarApi.login(phone=phoneL)
             curd.setStatus(q="scode", v=1, chatid=chatid)
             txt = f"🔎 کد با موفقیت به شماره <code>{str(phoneL)}</code>ارسال شد ، لطفا کد را ارسال کنید :  ✅"
-            context.bot.send_message(chat_id=qry.message.chat.id, text=txt, parse_mode='HTML')
+            await context.bot.send_message(chat_id=qry.message.chat.id, text=txt, parse_mode='HTML')
         elif data == "setlimit":
             try:
-                qry.answer()  # پاسخ به callback
+                await qry.answer()  # پاسخ به callback
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             curd.setStatus(q="slimit", v=1, chatid=chatid)
-            context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
+            await context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                              text="🤠 لطفاً یک عدد برای تعیین سقف مجاز تعداد اگهی نردبان روازنه ارسال کنید : ")
         elif data == "managelogin":
             try:
-                qry.answer()  # پاسخ به callback
+                await qry.answer()  # پاسخ به callback
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             
@@ -1084,14 +1084,21 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 key.append([InlineKeyboardButton('➕ اضافه کردن لاگین جدید', callback_data='addlogin')])
             
             key.append([InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')])
-            context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key), parse_mode='HTML')
+            try:
+                await context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key), parse_mode='HTML')
+            except Exception as e:
+                print(f"❌ خطا در ارسال منوی مدیریت لاگین: {e}")
+                import traceback
+                traceback.print_exc()
+                # سعی کن با bot_send_message ارسال کن
+                await bot_send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key), parse_mode='HTML')
         elif data == "addlogin":
             try:
-                qry.answer()  # پاسخ به callback
+                await qry.answer()  # پاسخ به callback
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             curd.setStatus(q="slogin", v=1, chatid=chatid)
-            context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
+            await context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                              text="🤠 لطفاً شماره لاگین را وارد نمایید : ")
         elif data == "remJob":
             job_id = curd.getJob(chatid=chatid)
@@ -1105,13 +1112,13 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     txtResult = f"عملیات نردبان با آیدی {str(job_id)} با موفقیت غیرفعال سازی شد ."
                     curd.removeJob(chatid=chatid)
                 try:
-                    qry.answer()  # پاسخ به callback
+                    await qry.answer()  # پاسخ به callback
                 except Exception as e:
                     print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-                context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
+                await context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                                  text=txtResult)
             else:
-                qry.answer(text="شما هیج نردبان فعالی ندارید !", show_alert=True)
+                await qry.answer(text="شما هیج نردبان فعالی ندارید !", show_alert=True)
         elif data.startswith("status"):
             details = data.split(":")
             result = curd.activeLogin(phone=details[2], status=int(details[1]))
@@ -1137,13 +1144,13 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     new_row.append(InlineKeyboardButton(button_text, callback_data=button_callback))
                 new_keyboard.append(new_row)
             
-            qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
-            qry.answer(text=result)
+            await qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
+            await qry.answer(text=result)
         else:
             # اگر هیچ callback match نکرد، فقط پاسخ بده (بدون پیام خطا)
             print(f"⚠️ [qrycall] هیچ handler برای data={data} پیدا نشد")
             try:
-                qry.answer()
+                await qry.answer()
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
     except Exception as e:
