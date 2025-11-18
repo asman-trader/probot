@@ -1,5 +1,6 @@
 # Standard library imports
 from datetime import datetime, timedelta
+import asyncio
 import random
 import sys
 import time
@@ -19,15 +20,18 @@ from telegram import (
     InlineKeyboardMarkup,
     CallbackQuery,
 )
+from telegram.error import TimedOut, NetworkError
 from telegram.ext import (
-    Updater,
+    Application,
+    ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
-    Filters,
-    CallbackContext
+    ContextTypes,
+    AIORateLimiter,
+    filters,
 )
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Local imports
 from loadConfig import configBot
@@ -84,20 +88,52 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 
-# ایجاد Updater برای نسخه PTB 12.8
-try:
-    # در نسخه PTB 12.8 از Updater استفاده می‌شود
-    updater = Updater(token=Datas.token, use_context=True)
-    dispatcher = updater.dispatcher
-    print("✅ Updater با موفقیت ایجاد شد")
-except Exception as e:
-    print(f"❌ خطا در ایجاد Updater: {e}")
-    print("\n💡 راهنمای رفع مشکل:")
-    print("   1. بررسی اتصال اینترنت")
-    print("   2. بررسی صحت token ربات در فایل configs.json")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+application_instance: Application | None = None
+scheduler = AsyncIOScheduler(timezone="Asia/Tehran")
+
+
+def get_bot():
+    if application_instance is None:
+        return None
+    return application_instance.bot
+
+
+async def bot_send_message(chat_id, text, **kwargs):
+    """ارسال پیام با retry mechanism برای مدیریت خطاهای timeout"""
+    bot = get_bot()
+    if bot is None:
+        print("⚠️ Bot instance not available yet for sending messages.")
+        return
+    
+    max_retries = 3
+    retry_delay = 2  # ثانیه
+    
+    for attempt in range(max_retries):
+        try:
+            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+            return  # اگر موفق بود، از تابع خارج شو
+        except (TimedOut, NetworkError) as e:
+            # خطاهای timeout یا network - retry کن
+            if attempt < max_retries - 1:
+                print(f"⚠️ خطا در ارسال پیام (تلاش {attempt + 1}/{max_retries}): {type(e).__name__} - صبر {retry_delay} ثانیه...")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # exponential backoff
+                continue
+            else:
+                # آخرین تلاش هم ناموفق بود
+                print(f"❌ خطا در ارسال پیام بعد از {max_retries} تلاش: {type(e).__name__} - {str(e)}")
+                # خطا را log کن اما crash نکن
+                import traceback
+                traceback.print_exc()
+                return
+        except Exception as e:
+            # سایر خطاها - retry نکن، فقط log کن
+            error_name = type(e).__name__
+            print(f"❌ خطا در ارسال پیام: {error_name} - {str(e)}")
+            # برای خطاهای غیر timeout، خطا را log کن اما crash نکن
+            import traceback
+            traceback.print_exc()
+            return
 
 try:
     db.create()
@@ -216,7 +252,7 @@ def isAdmin(chatid):
         traceback.print_exc()
         return False
 
-def addadmin(update: Update, context: CallbackContext):
+async def addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """افزودن ادمین جدید - فقط ادمین پیش‌فرض می‌تواند استفاده کند"""
     try:
         user = update.message
@@ -225,45 +261,172 @@ def addadmin(update: Update, context: CallbackContext):
         # بررسی اینکه آیا کاربر ادمین پیش‌فرض است
         admin_int = int(Datas.admin) if Datas.admin is not None else None
         if chatid != admin_int:
-            context.bot.send_message(chat_id=chatid, text="❌ شما مجاز به استفاده از این دستور نیستید.")
+            await context.bot.send_message(chat_id=chatid, text="❌ شما مجاز به استفاده از این دستور نیستید.")
             return
         
         # بررسی صحت ورودی
         parts = user.text.split(" ")
         if len(parts) < 2:
-            context.bot.send_message(chat_id=chatid, text="❌ لطفاً چت آیدی ادمین را وارد کنید.\nمثال: /add 123456789")
+            await context.bot.send_message(chat_id=chatid, text="❌ لطفاً چت آیدی ادمین را وارد کنید.\nمثال: /add 123456789")
             return
         
         try:
             adminChatid = int(parts[1])
         except ValueError:
-            context.bot.send_message(chat_id=chatid, text="❌ چت آیدی باید یک عدد باشد.\nمثال: /add 123456789")
+            await context.bot.send_message(chat_id=chatid, text="❌ چت آیدی باید یک عدد باشد.\nمثال: /add 123456789")
             return
         
         # بررسی اینکه آیا این ادمین قبلاً اضافه شده یا نه
         if adminChatid == admin_int:
-            context.bot.send_message(chat_id=chatid, text="❌ این ادمین پیش‌فرض است و قبلاً در سیستم موجود است.")
+            await context.bot.send_message(chat_id=chatid, text="❌ این ادمین پیش‌فرض است و قبلاً در سیستم موجود است.")
             return
         
         # اضافه کردن ادمین
         if curd.setAdmin(chatid=adminChatid) == 1:
-            context.bot.send_message(chat_id=chatid, text="✅ ادمین جدید با موفقیت به لیست ادمین ها افزوده شد.")
+            await context.bot.send_message(chat_id=chatid, text="✅ ادمین جدید با موفقیت به لیست ادمین ها افزوده شد.")
             try:
-                context.bot.send_message(chat_id=adminChatid, text="تبریک ، شما به ادمین های ربات اضافه شدید ، برای تایید فعال سازی لطفا /start را ارسال کنید")
+                await context.bot.send_message(chat_id=adminChatid, text="تبریک ، شما به ادمین های ربات اضافه شدید ، برای تایید فعال سازی لطفا /start را ارسال کنید")
             except:
                 pass
         else:
-            context.bot.send_message(chat_id=chatid, text="❌ مشکلی در اضافه کردن ادمین وجود دارد.")
+                await context.bot.send_message(chat_id=chatid, text="❌ مشکلی در اضافه کردن ادمین وجود دارد.")
     except Exception as e:
         print(f"❌ خطا در تابع addadmin: {e}")
         import traceback
         traceback.print_exc()
         try:
-            context.bot.send_message(chat_id=chatid, text="❌ خطایی در پردازش درخواست شما رخ داد.")
+            await context.bot.send_message(chat_id=chatid, text="❌ خطایی در پردازش درخواست شما رخ داد.")
         except:
             pass
 
-def start(update: Update, context: CallbackContext):
+def format_admin_menu(chat_id):
+    """
+    ساخت متن و دکمه‌های منوی اصلی ادمین.
+    این تابع برای جلوگیری از تکرار کد در بخش‌های مختلف استفاده می‌شود.
+    """
+    curd.addAdmin(chatid=chat_id)
+    curd.addManage(chatid=chat_id)
+    mngDetail = curd.getManage(chatid=chat_id)
+    stats = curd.getStats(chatid=chat_id)
+
+    # وضعیت کلی
+    is_active = mngDetail[0] == 1
+    status_emoji = "🟢" if is_active else "🔴"
+    status_text = "فعال" if is_active else "غیرفعال"
+
+    # نوع نردبان
+    nardeban_type = mngDetail[3] if len(mngDetail) > 3 else 1
+    type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
+    type_name = type_names.get(nardeban_type, "ترتیبی کامل")
+
+    # وضعیت job
+    has_job = curd.getJob(chatid=chat_id) is not None
+    job_status = "🔄 در حال اجرا" if has_job else "⏸️ متوقف"
+
+    welcome_text = f"""🤖 <b>منوی مدیریت ربات نردبان</b>
+
+{status_emoji} <b>وضعیت ربات:</b> {status_text}
+📊 <b>آمار کلی:</b>
+   ✅ نردبان شده: <b>{stats['total_nardeban']}</b>
+   📦 کل استخراج: <b>{stats['total_tokens']}</b>
+   ⏳ در انتظار: <b>{stats['total_pending']}</b>
+   ❌ ناموفق: <b>{stats.get('total_failed', 0)}</b>
+
+⚙️ <b>تنظیمات جاری:</b>
+   🔽 سقف نردبان: <b>{mngDetail[1]}</b>
+   🎯 نوع نردبان: <b>{type_name}</b>
+   {job_status}
+
+👇 <i>یکی از گزینه‌های زیر را انتخاب کنید:</i>"""
+
+    btns = [
+        [
+            InlineKeyboardButton(
+                f"{'🟢' if is_active else '🔴'} {'خاموش کردن' if is_active else 'روشن کردن'} ربات",
+                callback_data="setactive:0" if is_active else "setactive:1"
+            )
+        ],
+        [InlineKeyboardButton('📊 مشاهده آمار کامل', callback_data='stats_info')],
+        [InlineKeyboardButton('📱 مدیریت لاگین‌ها', callback_data='managelogin')],
+        [
+            InlineKeyboardButton(f'🔽 سقف نردبان: {mngDetail[1]}', callback_data='setlimit'),
+            InlineKeyboardButton(f'⚙️ نوع: {type_name[:10]}', callback_data='setNardebanType')
+        ],
+        [
+            InlineKeyboardButton('🔄 استخراج مجدد', callback_data='reExtract'),
+            InlineKeyboardButton('⏹️ توقف نردبان', callback_data='remJob')
+        ],
+    ]
+
+    if int(chat_id) == int(Datas.admin):
+        btns.append([InlineKeyboardButton('👥 مدیریت ادمین‌ها', callback_data='manageAdmins')])
+
+    btns.append([InlineKeyboardButton('❓ راهنما', callback_data='help_menu')])
+    btns.append([InlineKeyboardButton('🔁 بروزرسانی منو', callback_data='refreshMenu')])
+
+    return welcome_text, InlineKeyboardMarkup(btns)
+
+
+async def send_admin_menu(chat_id, message_id=None):
+    """ارسال یا بروزرسانی منوی اصلی ادمین با مدیریت خطا."""
+    bot = get_bot()
+    if bot is None:
+        print("⚠️ Bot instance not available for send_admin_menu.")
+        return
+
+    try:
+        welcome_text, keyboard = format_admin_menu(chat_id)
+        if message_id:
+            max_retries = 3
+            retry_delay = 2
+            for attempt in range(max_retries):
+                try:
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=welcome_text,
+                        reply_markup=keyboard,
+                        parse_mode='HTML'
+                    )
+                    return
+                except (TimedOut, NetworkError) as e:
+                    # خطاهای timeout یا network - retry کن
+                    if attempt < max_retries - 1:
+                        print(f"⚠️ خطا در ویرایش پیام (تلاش {attempt + 1}/{max_retries}): {type(e).__name__} - صبر {retry_delay} ثانیه...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        print(f"❌ خطا در ویرایش پیام بعد از {max_retries} تلاش: {type(e).__name__}")
+                        # اگر retry ناموفق بود، سعی کن پیام جدید بفرستی
+                        break
+                except Exception as e:
+                    # سایر خطاها (مثلاً message not modified) - سعی کن پیام جدید بفرستی
+                    error_name = type(e).__name__
+                    print(f"⚠️ خطا در ویرایش پیام: {error_name} - تلاش برای ارسال پیام جدید...")
+                    break
+            
+            # اگر ویرایش موفق نبود، پیام جدید ارسال کن
+            await bot_send_message(
+                chat_id=chat_id,
+                text=welcome_text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+        else:
+            await bot_send_message(
+                chat_id=chat_id,
+                text=welcome_text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+    except Exception as e:
+        print(f"❌ خطا در send_admin_menu: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # پشتیبانی از هم message و هم callback_query
         if update.message:
@@ -281,95 +444,16 @@ def start(update: Update, context: CallbackContext):
         print(f"🔍 نتیجه isAdmin: {is_admin_result}")
         
         if is_admin_result:
-            curd.addAdmin(chatid=chat_id)
-            curd.addManage(chatid=chat_id)
-            mngDetail = curd.getManage(chatid=chat_id)
-            
-            # دریافت آمار اگهی‌ها
-            stats = curd.getStats(chatid=chat_id)
-            
-            # تعیین وضعیت ربات
-            is_active = mngDetail[0] == 1
-            status_emoji = "🟢" if is_active else "🔴"
-            status_text = "فعال" if is_active else "غیرفعال"
-            
-            # تعیین نوع نردبان فعلی
-            nardeban_type = mngDetail[3] if len(mngDetail) > 3 else 1
-            type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
-            type_name = type_names.get(nardeban_type, "ترتیبی کامل")
-            
-            # بررسی وجود job فعال
-            has_job = curd.getJob(chatid=chat_id) is not None
-            job_status = "🔄 در حال اجرا" if has_job else "⏸️ متوقف"
-            
-            # ساخت پیام خوش‌آمدگویی
-            welcome_text = f"""🤖 <b>منوی مدیریت ربات نردبان</b>
-
-{status_emoji} <b>وضعیت:</b> {status_text}
-📊 <b>آمار کلی:</b>
-   ✅ نردبان شده: <b>{stats['total_nardeban']}</b>
-   📦 کل استخراج: <b>{stats['total_tokens']}</b>
-   ⏳ در انتظار: <b>{stats['total_pending']}</b>
-   ❌ ناموفق: <b>{stats.get('total_failed', 0)}</b>
-
-⚙️ <b>تنظیمات:</b>
-   🔽 سقف نردبان: <b>{mngDetail[1]}</b>
-   🎯 نوع نردبان: <b>{type_name}</b>
-   {job_status}
-
-👇 <i>لطفاً یکی از گزینه‌های زیر را انتخاب کنید:</i>"""
-
-            # ساخت دکمه‌های منو با گروه‌بندی بهتر
-            btns = []
-            
-            # بخش کنترل ربات
-            btns.append([
-                InlineKeyboardButton(
-                    f"{'🟢' if is_active else '🔴'} {'خاموش کردن' if is_active else 'روشن کردن'} ربات",
-                    callback_data="setactive:1" if not is_active else "setactive:0"
-                )
-            ])
-            
-            # بخش آمار و اطلاعات
-            btns.append([
-                InlineKeyboardButton('📊 مشاهده آمار کامل', callback_data='stats_info')
-            ])
-            
-            # بخش مدیریت
-            btns.append([
-                InlineKeyboardButton('📱 مدیریت لاگین‌ها', callback_data='managelogin')
-            ])
-            
-            # بخش تنظیمات
-            btns.append([
-                InlineKeyboardButton(f'🔽 سقف نردبان: {mngDetail[1]}', callback_data='setlimit'),
-                InlineKeyboardButton(f'⚙️ نوع: {type_name[:10]}', callback_data='setNardebanType')
-            ])
-            
-            # بخش عملیات
-            btns.append([
-                InlineKeyboardButton('🔄 استخراج مجدد', callback_data='reExtract'),
-                InlineKeyboardButton('⏹️ توقف نردبان', callback_data='remJob')
-            ])
-            
-            # بخش مدیریت ادمین (فقط برای ادمین اصلی)
-            if int(chat_id) == int(Datas.admin):
-                btns.append([
-                    InlineKeyboardButton('👥 مدیریت ادمین‌ها', callback_data='manageAdmins')
-                ])
-            
-            # دکمه راهنما
-            btns.append([
-                InlineKeyboardButton('❓ راهنما', callback_data='help_menu')
-            ])
-            
-            context.bot.send_message(
-                chat_id=chat_id, 
-                text=welcome_text, 
-                reply_markup=InlineKeyboardMarkup(btns),
-                parse_mode='HTML'
-            )
-            print(f"✅ منو برای کاربر {chat_id} ارسال شد")
+            try:
+                await send_admin_menu(chat_id=chat_id)
+                print(f"✅ منو برای کاربر {chat_id} ارسال شد")
+            except Exception as e:
+                print(f"⚠️ خطا در ارسال منو برای کاربر {chat_id}: {e}")
+                # سعی کن یک پیام ساده بفرستی
+                try:
+                    await bot_send_message(chat_id=chat_id, text="🤖 ربات آماده است. لطفاً دوباره /start را ارسال کنید.")
+                except:
+                    pass
         else:
             # اگر کاربر ادمین نبود → یک پیام و کیبورد بفرستد
             # بررسی مجدد برای اطمینان از اینکه کاربر واقعاً ادمین نیست
@@ -379,7 +463,7 @@ def start(update: Update, context: CallbackContext):
                 return
             
             keyRequest = [[InlineKeyboardButton('درخواست ادمین شدن', callback_data='reqAdmin')]]
-            context.bot.send_message(
+            await context.bot.send_message(
                 chat_id=chat_id,
                 text="شما مجاز به استفاده از ربات نمیباشید .",
                 reply_markup=InlineKeyboardMarkup(keyRequest)
@@ -391,30 +475,30 @@ def start(update: Update, context: CallbackContext):
         traceback.print_exc()
         try:
             if update.message:
-                context.bot.send_message(
+                await context.bot.send_message(
                     chat_id=update.message.chat.id,
                     text="❌ خطایی در پردازش درخواست شما رخ داد. لطفاً دوباره تلاش کنید."
                 )
         except:
             pass
 
-def shoro(update: Update, context: CallbackContext):
+async def shoro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message
     print(f"📨 [shoro] دستور /end دریافت شد از کاربر: {user.chat.id}")
     is_admin_result = isAdmin(user.chat.id)
     print(f"🔍 [shoro] نتیجه isAdmin: {is_admin_result}")
     if is_admin_result:
         if curd.getJob(chatid=user.chat.id):
-            context.bot.send_message(chat_id=user.chat.id, text="شما یک عملیات نردبان فعال دارید ، از غیرفعال سازی آن اطمینان یابید سپس اقدام کنید !", reply_to_message_id=user.message_id)
+            await context.bot.send_message(chat_id=user.chat.id, text="شما یک عملیات نردبان فعال دارید ، از غیرفعال سازی آن اطمینان یابید سپس اقدام کنید !", reply_to_message_id=user.message_id)
         else:
-            refreshUsed(chatid=user.chat.id)
+            await asyncio.to_thread(refreshUsed, chatid=user.chat.id)
             user = update.message
             endTime = int(user.text.split("=")[1])
             if endTime in range(0, 24):
-                startNardebanDasti(sch=scheduler, end=endTime, chatid=user.chat.id)
-                context.bot.send_message(chat_id=user.chat.id, text="عملیات نردبان دستی شکل گرفت.", reply_to_message_id=user.message_id)
+                await startNardebanDasti(end=endTime, chatid=user.chat.id)
+                await context.bot.send_message(chat_id=user.chat.id, text="عملیات نردبان دستی شکل گرفت.", reply_to_message_id=user.message_id)
             else:
-                context.bot.send_message(chat_id=user.chat.id,
+                await context.bot.send_message(chat_id=user.chat.id,
                                  text="مقدار ساعت پایانی عددی باید بین 0 تا 23 باشد !",
                                  reply_to_message_id=user.message_id)
     else:
@@ -425,9 +509,9 @@ def shoro(update: Update, context: CallbackContext):
             return
         
         print(f"❌ [shoro] کاربر {user.chat.id} ادمین نیست - ارسال پیام خطا")
-        context.bot.send_message(chat_id=user.chat.id, text="شما مجاز به استفاده از ربات نمیباشید .")
+        await context.bot.send_message(chat_id=user.chat.id, text="شما مجاز به استفاده از ربات نمیباشید .")
 
-def mainMenu(update: Update, context: CallbackContext):
+async def mainMenu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.message
         chatid = user.chat.id
@@ -445,7 +529,7 @@ def mainMenu(update: Update, context: CallbackContext):
                 curd.editLimit(newLimit=user.text, chatid=chatid)
                 curd.setStatus(q="slimit", v=0, chatid=chatid)
                 txt = f"🔎 سقف تعداد اگهی برای نردبان روزانه به  <code>{str(user.text)}</code> تنظیم گردید. ✅"
-                context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
+                await context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
                                  parse_mode='HTML')
             elif status[0] == 1:
                 print(f"✅ [mainMenu] پردازش slogin برای کاربر {chatid}")
@@ -453,7 +537,7 @@ def mainMenu(update: Update, context: CallbackContext):
                 divarApi.login(phone=user.text)
                 curd.setStatus(q="scode", v=1, chatid=chatid)
                 txt = f"🔎 کد با موفقیت به شماره <code>{str(user.text)}</code>ارسال شد ، لطفا کد را ارسال کنید :  ✅"
-                context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
+                await context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
                                  parse_mode='HTML')
             elif status[2] == 1:
                 print(f"✅ [mainMenu] پردازش scode برای کاربر {chatid}")
@@ -466,7 +550,7 @@ def mainMenu(update: Update, context: CallbackContext):
                     txtr = f"✅ ورود به شماره {str(status[0])} موفقیت آمیز بود ."
                 else:
                     txtr = str(cookie)
-                context.bot.send_message(chat_id=chatid, text=txtr, reply_to_message_id=user.message_id,
+                await context.bot.send_message(chat_id=chatid, text=txtr, reply_to_message_id=user.message_id,
                                  parse_mode='HTML')
             else:
                 print(f"⚠️ [mainMenu] کاربر {chatid} ادمین است اما هیچ status فعالی ندارد - پیام ارسال نمی‌شود")
@@ -478,18 +562,18 @@ def mainMenu(update: Update, context: CallbackContext):
                 return
             
             print(f"❌ [mainMenu] کاربر {chatid} ادمین نیست - ارسال پیام خطا")
-            context.bot.send_message(chat_id=chatid, text="شما مجاز به استفاده از ربات نمیباشید .")
+            await context.bot.send_message(chat_id=chatid, text="شما مجاز به استفاده از ربات نمیباشید .")
     except Exception as e:
         print(f"❌ خطا در تابع mainMenu: {e}")
         import traceback
         traceback.print_exc()
         try:
-            context.bot.send_message(chat_id=chatid, 
+            await context.bot.send_message(chat_id=chatid, 
                                    text="❌ خطایی در پردازش پیام شما رخ داد.")
         except:
             pass
 
-def qrycall(update: Update, context: CallbackContext):
+async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"🔍 [qrycall] تابع qrycall فراخوانی شد")
     try:
         qry: CallbackQuery = update.callback_query
@@ -507,12 +591,12 @@ def qrycall(update: Update, context: CallbackContext):
             txtReq = f"🗣 کاربری با چت آیدی {str(dataReq.id)} و نام {dataReq.full_name}  برای ربات شما درخواست ادمینی دارد ، آیا تایید میکنید ؟"
             btnadmin = [[InlineKeyboardButton('تایید', callback_data=f'admin:{str(dataReq.id)}')]]
             try:
-                context.bot.send_message(chat_id=Datas.admin, text=txtReq, reply_markup=InlineKeyboardMarkup(btnadmin))
+                await context.bot.send_message(chat_id=Datas.admin, text=txtReq, reply_markup=InlineKeyboardMarkup(btnadmin))
             except:
                 txtResult = "مشکلی در ارسال درخواست وجود دارد ."
             else:
                 txtResult = "درخواست شما برای ادمین ارسال شد ، منتظر تایید آن باشید !"
-            qry.answer(text=txtResult, show_alert=True)
+            await qry.answer(text=txtResult, show_alert=True)
             return  # خروج از تابع بعد از پردازش reqAdmin
         
         # بررسی ادمین بودن برای سایر callback ها
@@ -523,7 +607,7 @@ def qrycall(update: Update, context: CallbackContext):
             print(f"❌ [qrycall] کاربر {chatid} ادمین نیست - فقط پاسخ callback (بدون پیام خطا)")
             # فقط پاسخ callback بده، بدون نمایش alert
             try:
-                qry.answer()
+                await qry.answer()
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             return
@@ -578,7 +662,7 @@ def qrycall(update: Update, context: CallbackContext):
             
             # پاسخ به callback (فقط یک بار)
             try:
-                qry.answer()  # پاسخ به callback
+                await qry.answer()  # پاسخ به callback
                 print(f"✅ [stats_info] پاسخ callback با موفقیت ارسال شد")
             except Exception as e:
                 print(f"⚠️ [stats_info] خطا در پاسخ به callback: {e}")
@@ -592,7 +676,7 @@ def qrycall(update: Update, context: CallbackContext):
                     print(f"🔍 [stats_info] qry.message.chat.id: {qry.message.chat.id}")
                 
                 # استفاده از context.bot.edit_message_text برای اطمینان از کارکرد صحیح
-                edited_message = context.bot.edit_message_text(
+                edited_message = await context.bot.edit_message_text(
                     chat_id=chatid,
                     message_id=qry.message.message_id,
                     text=stats_msg,
@@ -614,7 +698,7 @@ def qrycall(update: Update, context: CallbackContext):
                 # اگر ویرایش موفق نبود، پیام جدید ارسال کن
                 try:
                     print(f"🔍 [stats_info] تلاش برای ارسال پیام جدید...")
-                    result = context.bot.send_message(
+                    result = await context.bot.send_message(
                         chat_id=chatid,
                         text=stats_msg,
                         parse_mode='HTML',
@@ -636,7 +720,7 @@ def qrycall(update: Update, context: CallbackContext):
             # نمایش لیست اگهی‌ها با لینک کامل
             try:
                 try:
-                    qry.answer()
+                    await qry.answer()
                 except Exception as e:
                     print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
                 
@@ -644,7 +728,7 @@ def qrycall(update: Update, context: CallbackContext):
                 all_pending = get_all_pending_tokens_from_json(chatid=chatid)
                 
                 if not all_pending:
-                    context.bot.send_message(
+                    await context.bot.send_message(
                         chat_id=chatid,
                         text="⚠️ هیچ اگهی pending برای نمایش وجود ندارد."
                     )
@@ -704,14 +788,14 @@ def qrycall(update: Update, context: CallbackContext):
                     
                     # ارسال هر بخش
                     for part in parts:
-                        context.bot.send_message(
+                        await context.bot.send_message(
                             chat_id=chatid,
                             text=part,
                             parse_mode='HTML',
                             disable_web_page_preview=False
                         )
                 else:
-                    context.bot.send_message(
+                    await context.bot.send_message(
                         chat_id=chatid,
                         text=message,
                         parse_mode='HTML',
@@ -724,7 +808,7 @@ def qrycall(update: Update, context: CallbackContext):
                 import traceback
                 traceback.print_exc()
                 try:
-                    context.bot.send_message(
+                    await context.bot.send_message(
                         chat_id=chatid,
                         text="❌ خطا در نمایش لیست اگهی‌ها."
                     )
@@ -732,8 +816,8 @@ def qrycall(update: Update, context: CallbackContext):
                     pass
         elif data == "reExtract":
             # استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال
-            qry.answer(text="در حال استخراج مجدد اگهی‌ها...", show_alert=False)
-            reExtractTokens(chatid=chatid)
+            await qry.answer(text="در حال استخراج مجدد اگهی‌ها...", show_alert=False)
+            await reExtractTokens(chatid=chatid)
         elif data == "setNardebanType":
             # نمایش منوی انتخاب نوع نردبان
             mngDetail = curd.getManage(chatid=chatid)
@@ -748,7 +832,7 @@ def qrycall(update: Update, context: CallbackContext):
             ]
             
             try:
-                qry.answer()
+                await qry.answer()
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             
@@ -768,7 +852,7 @@ def qrycall(update: Update, context: CallbackContext):
    آگهی‌هایی که بازدید کمتر دارند زودتر نردبان می‌شوند
    فاصله زمانی بین نردبان‌ها کاملاً نامنظم است"""
             
-            context.bot.send_message(
+            await context.bot.send_message(
                 chat_id=chatid,
                 text=type_info_text,
                 reply_markup=InlineKeyboardMarkup(type_buttons),
@@ -780,56 +864,58 @@ def qrycall(update: Update, context: CallbackContext):
             curd.setStatusManage(q="nardeban_type", v=nardeban_type, chatid=chatid)
             
             type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
-            qry.answer(text=f"نوع نردبان به {type_names[nardeban_type]} تغییر یافت", show_alert=True)
-            # بازگشت به منو
-            start(update, context)
+            await qry.answer(text=f"نوع نردبان به {type_names[nardeban_type]} تغییر یافت", show_alert=True)
+            if qry.message:
+                await send_admin_menu(chat_id=chatid, message_id=qry.message.message_id)
+            else:
+                await send_admin_menu(chat_id=chatid)
         elif data == "backToMenu":
             try:
-                qry.answer()
+                await qry.answer()
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-            start(update, context)
+            if qry.message:
+                await send_admin_menu(chat_id=chatid, message_id=qry.message.message_id)
+            else:
+                await send_admin_menu(chat_id=chatid)
+        elif data == "refreshMenu":
+            try:
+                await qry.answer(text="منو بروزرسانی شد ✅", show_alert=False)
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
+            if qry.message:
+                await send_admin_menu(chat_id=chatid, message_id=qry.message.message_id)
+            else:
+                await send_admin_menu(chat_id=chatid)
         elif data == "help_menu":
             try:
-                qry.answer()
+                await qry.answer()
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-            
-            help_text = """📖 <b>راهنمای استفاده از ربات</b>
-
-<b>🔹 شروع کار:</b>
-1️⃣ ابتدا لاگین‌های دیوار را اضافه کنید
-2️⃣ سقف تعداد نردبان را تنظیم کنید
-3️⃣ نوع نردبان را انتخاب کنید
-4️⃣ ربات را روشن کنید
-5️⃣ با دستور /end نردبان را شروع کنید
-
-<b>🔹 انواع نردبان:</b>
-1️⃣ <b>ترتیبی کامل:</b> هر لاگین → همه آگهی‌هاش → بعد لاگین بعدی
-2️⃣ <b>تصادفی:</b> در هر بار یک آگهی کاملاً تصادفی
-3️⃣ <b>ترتیبی نوبتی:</b> از هر لاگین یک آگهی → نوبتی
-4️⃣ <b>جریان طبیعی:</b> آگهی‌های قدیمی‌تر اولویت دارند
-
-<b>🔹 دستورات:</b>
-/start - نمایش منو
-/end=ساعت - شروع نردبان تا ساعت مشخص (0-23)
-
-<b>🔹 نکات مهم:</b>
-• اگهی‌های استخراج شده حفظ می‌شوند
-• نردبان از اگهی‌های pending شروع می‌شود
-• در صورت تمام شدن، استخراج مجدد انجام می‌شود
-• آمار همیشه به‌روز است"""
-            
-            help_buttons = [
-                [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
-            ]
-            
-            context.bot.send_message(
-                chat_id=chatid,
-                text=help_text,
-                reply_markup=InlineKeyboardMarkup(help_buttons),
-                parse_mode='HTML'
+            help_text = (
+                "📘 <b>راهنمای سریع مدیریت ربات</b>\n\n"
+                "🔹 <b>روشن/خاموش</b>: فعال یا غیرفعال کردن تمام عملیات نردبان.\n"
+                "🔹 <b>آمار کامل</b>: مشاهده وضعیت هر لاگین و اگهی‌ها.\n"
+                "🔹 <b>مدیریت لاگین‌ها</b>: افزودن، حذف یا بروزرسانی کوکی‌ها.\n"
+                "🔹 <b>سقف نردبان</b>: تعیین تعداد نردبان روزانه برای هر لاگین.\n"
+                "🔹 <b>نوع نردبان</b>: انتخاب استراتژی اجرای نردبان.\n"
+                "🔹 <b>استخراج مجدد</b>: دریافت لیست جدید اگهی‌ها از دیوار.\n"
+                "🔹 <b>توقف نردبان</b>: لغو job فعال و ریست شمارنده‌ها.\n\n"
+                "برای بازگشت به منوی اصلی، گزینه زیر را انتخاب کنید."
             )
+            help_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
+            ])
+            if qry.message:
+                await context.bot.edit_message_text(
+                    chat_id=chatid,
+                    message_id=qry.message.message_id,
+                    text=help_text,
+                    reply_markup=help_keyboard,
+                    parse_mode='HTML'
+                )
+            else:
+                await context.bot.send_message(chat_id=chatid, text=help_text, reply_markup=help_keyboard, parse_mode='HTML')
         elif data == "manageAdmins":
             # فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند
             admin_int = int(Datas.admin) if Datas.admin is not None else None
@@ -899,8 +985,10 @@ def qrycall(update: Update, context: CallbackContext):
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             
-            # به‌روزرسانی منو با استفاده از تابع start
-            start(update, context)
+            if qry.message:
+                await send_admin_menu(chat_id=chatid, message_id=qry.message.message_id)
+            else:
+                await send_admin_menu(chat_id=chatid)
         elif data.startswith("delAdmin"):
             # فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند
             admin_int = int(Datas.admin) if Datas.admin is not None else None
@@ -1071,126 +1159,89 @@ def qrycall(update: Update, context: CallbackContext):
         except:
             pass
 
-def startNardebanDasti(sch, chatid, end: int):
-    updater.bot.send_message(chat_id=chatid, text="عملیات شروع شد")
+async def startNardebanDasti(chatid, end: int):
+    await bot_send_message(chat_id=chatid, text="عملیات شروع شد")
 
     manageDetails = curd.getManage(chatid=chatid)  # 0 = Active , 1 = Limite Global
     logins = curd.getCookies(chatid=chatid)
 
-    if logins:
-        # بررسی اینکه آیا توکن‌های pending از فرایند قبلی وجود دارند
-        has_pending = has_pending_tokens_in_json(chatid=chatid)
+    if not logins:
+        await bot_send_message(chat_id=chatid, text="تمامی لاگین‌های شما غیرفعال است و نمی‌توانم نردبانی انجام دهم!")
+        return
+
+    has_pending = has_pending_tokens_in_json(chatid=chatid)
+    
+    if has_pending:
+        all_pending = get_all_pending_tokens_from_json(chatid=chatid)
+        pending_by_phone = {}
+        for phone, token in all_pending:
+            pending_by_phone.setdefault(phone, []).append(token)
         
-        if has_pending:
-            # دریافت آمار توکن‌های pending
-            all_pending = get_all_pending_tokens_from_json(chatid=chatid)
-            total_pending = len(all_pending)
-            
-            # گروه‌بندی بر اساس شماره تلفن
-            pending_by_phone = {}
-            for phone, token in all_pending:
-                if phone not in pending_by_phone:
-                    pending_by_phone[phone] = []
-                pending_by_phone[phone].append(token)
-            
-            # ساخت پیام اطلاع‌رسانی
-            pending_info = f"📋 استخراج‌های فرایند قبلی یافت شد:\n\n"
-            for phone, tokens in pending_by_phone.items():
-                pending_info += f"📱 شماره {phone}: {len(tokens)} اگهی pending\n"
-            pending_info += f"\n✅ نردبان از ادامه اگهی‌های قبلی شروع می‌شود."
-            
-            updater.bot.send_message(chat_id=chatid, text=pending_info)
-        else:
-            # اگر توکن pending وجود ندارد، استخراج اولیه انجام می‌شود
-            updater.bot.send_message(chat_id=chatid, text="🔄 هیچ اگهی pending از فرایند قبلی یافت نشد. در حال استخراج اولیه...")
-            
-            # استخراج اولیه برای تمام لاگین‌ها
-            active_logins = [l for l in logins if l[2] == 0]  # فقط لاگین‌های فعال
-            if active_logins:
-                for l in active_logins:
-                    try:
-                        nardebanAPI = nardeban(apiKey=l[1])
-                        brandToken = nardebanAPI.getBranToken()
-                        
-                        if not brandToken:
-                            updater.bot.send_message(chat_id=chatid, 
-                                         text=f"❌ خطا در دریافت brand token برای شماره {l[0]}")
-                            continue
-                        
-                        # استخراج توکن‌های جدید
-                        tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
-                        
-                        if tokens:
-                            # ذخیره توکن‌ها در JSON
-                            new_count = add_tokens_to_json(chatid=chatid, phone=int(l[0]), tokens=tokens)
-                            
-                            if new_count > 0:
-                                # همچنین در دیتابیس هم ذخیره کن (برای سازگاری)
-                                existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
-                                new_tokens = [t for t in tokens if t not in existing_tokens]
-                                if new_tokens:
-                                    curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
-                                
-                                updater.bot.send_message(chat_id=chatid,
-                                                 text=f"✅ از شماره {l[0]}: {new_count} اگهی استخراج شد.")
-                            else:
-                                updater.bot.send_message(chat_id=chatid,
-                                                 text=f"ℹ️ از شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند.")
-                        else:
-                            updater.bot.send_message(chat_id=chatid,
-                                         text=f"⚠️ از شماره {l[0]}: هیچ اگهی‌ای یافت نشد.")
-                            
-                    except Exception as e:
-                        print(f"Error extracting tokens for phone {l[0]}: {e}")
-                        updater.bot.send_message(chat_id=chatid,
-                                 text=f"❌ خطا در استخراج برای شماره {l[0]}: {str(e)}")
-                
-                updater.bot.send_message(chat_id=chatid, text="✅ استخراج اولیه به پایان رسید.")
-        
-        # محاسبه سقف نردبان برای هر لاگین
-        total_nardeban = int(manageDetails[1])
-        currentLimit = round(total_nardeban / len(logins))  # سقف نردبان هر لاگین
-
-        updater.bot.send_message(chat_id=chatid, text=f"برای هر لاگین سقف نردبان به عدد {str(currentLimit)} است.")
-
-        # ذخیره سقف نردبان برای هر لاگین
-        curd.setStatusManage(q="climit", v=currentLimit, chatid=chatid)
-
-        # محاسبه زمان باقی‌مانده بر اساس ساعت شروع و ساعت پایان
-        current_hour = int(datetime.now().hour)
-        remainTime_hours = end - current_hour
-
-        if remainTime_hours <= 0:
-            updater.bot.send_message(chat_id=chatid, text="زمان پایان نردبان‌ها از زمان فعلی گذشته است.")
-            return
-
-        # محاسبه زمان بین نردبان‌ها به دقیقه و گرد کردن آن به عدد صحیح
-        stopTime_minutes = (remainTime_hours * 60) / total_nardeban
-        stopTime_minutes = round(stopTime_minutes)  # گرد کردن دقیقه به عدد صحیح
-
-        # بررسی نوع نردبان
-        nardeban_type = manageDetails[3] if len(manageDetails) > 3 else 1
-        
-        # اگر نوع نردبان "جریان طبیعی" است، از زمان‌بندی نامنظم استفاده نکن
-        if nardeban_type == 4:
-            updater.bot.send_message(chat_id=chatid, text="🎢 نوع نردبان: جریان طبیعی - زمان‌بندی نامنظم فعال است.")
-            # شروع اولین نردبان (زمان‌بندی بعدی در خود sendNardeban تنظیم می‌شود)
-            sendNardeban(chatid)
-            # برای نوع 4، job خاصی ذخیره نمی‌کنیم چون هر بار job جدید ایجاد می‌شود
-        else:
-            updater.bot.send_message(chat_id=chatid, text=f"زمان بین نردبان‌ها حدود {str(stopTime_minutes)} دقیقه است.")
-
-        # تنظیم job برای زمان‌بندی نردبان
-        s = sch.add_job(sendNardeban, "interval", args=[chatid], minutes=stopTime_minutes)
-
-        # تنظیم job برای حذف job در زمان پایان
-        sch.add_job(remJob, trigger="cron", args=[sch, s.id, chatid], hour=end)
-
-        # ذخیره اطلاعات job در دیتابیس
-        curd.addJob(chatid=chatid, job=s.id)
-
+        pending_info = "📋 استخراج‌های فرایند قبلی یافت شد:\n\n"
+        for phone, tokens in pending_by_phone.items():
+            pending_info += f"📱 شماره {phone}: {len(tokens)} اگهی pending\n"
+        pending_info += "\n✅ نردبان از ادامه اگهی‌های قبلی شروع می‌شود."
+        await bot_send_message(chat_id=chatid, text=pending_info)
     else:
-        updater.bot.send_message(chat_id=chatid, text="تمامی لاگین‌های شما غیرفعال است و نمی‌توانم نردبانی انجام دهم!")
+        await bot_send_message(chat_id=chatid, text="🔄 هیچ اگهی pending از فرایند قبلی یافت نشد. در حال استخراج اولیه...")
+        active_logins = [l for l in logins if l[2] == 0]
+        if active_logins:
+            for l in active_logins:
+                try:
+                    nardebanAPI = nardeban(apiKey=l[1])
+                    brandToken = nardebanAPI.getBranToken()
+                    
+                    if not brandToken:
+                        await bot_send_message(chat_id=chatid, text=f"❌ خطا در دریافت brand token برای شماره {l[0]}")
+                        continue
+                    
+                    tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
+                    
+                    if tokens:
+                        new_count = add_tokens_to_json(chatid=chatid, phone=int(l[0]), tokens=tokens)
+                        
+                        if new_count > 0:
+                            existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
+                            new_tokens = [t for t in tokens if t not in existing_tokens]
+                            if new_tokens:
+                                curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
+                            
+                            await bot_send_message(chat_id=chatid, text=f"✅ از شماره {l[0]}: {new_count} اگهی استخراج شد.")
+                        else:
+                            await bot_send_message(chat_id=chatid, text=f"ℹ️ از شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند.")
+                    else:
+                        await bot_send_message(chat_id=chatid, text=f"⚠️ از شماره {l[0]}: هیچ اگهی‌ای یافت نشد.")
+                        
+                except Exception as e:
+                    print(f"Error extracting tokens for phone {l[0]}: {e}")
+                    await bot_send_message(chat_id=chatid, text=f"❌ خطا در استخراج برای شماره {l[0]}: {str(e)}")
+            
+            await bot_send_message(chat_id=chatid, text="✅ استخراج اولیه به پایان رسید.")
+    
+    total_nardeban = int(manageDetails[1])
+    currentLimit = round(total_nardeban / len(logins))
+
+    await bot_send_message(chat_id=chatid, text=f"برای هر لاگین سقف نردبان به عدد {str(currentLimit)} است.")
+    curd.setStatusManage(q="climit", v=currentLimit, chatid=chatid)
+
+    current_hour = int(datetime.now().hour)
+    remainTime_hours = end - current_hour
+
+    if remainTime_hours <= 0:
+        await bot_send_message(chat_id=chatid, text="زمان پایان نردبان‌ها از زمان فعلی گذشته است.")
+        return
+
+    stopTime_minutes = round((remainTime_hours * 60) / total_nardeban)
+    nardeban_type = manageDetails[3] if len(manageDetails) > 3 else 1
+    
+    if nardeban_type == 4:
+        await bot_send_message(chat_id=chatid, text="🎢 نوع نردبان: جریان طبیعی - زمان‌بندی نامنظم فعال است.")
+        await sendNardeban(chatid)
+    else:
+        await bot_send_message(chat_id=chatid, text=f"زمان بین نردبان‌ها حدود {str(stopTime_minutes)} دقیقه است.")
+        job = scheduler.add_job(sendNardeban, "interval", args=[chatid], minutes=stopTime_minutes)
+        scheduler.add_job(remJob, trigger="cron", args=[scheduler, job.id, chatid], hour=end)
+        curd.addJob(chatid=chatid, job=job.id)
 
 def shouldExtractTokens(chatid, available_logins):
     """بررسی می‌کند که آیا باید استخراج انجام شود یا نه
@@ -1222,7 +1273,7 @@ def shouldExtractTokens(chatid, available_logins):
         print(f"Error in shouldExtractTokens: {e}")
         return False
 
-def extractTokensIfNeeded(chatid, available_logins):
+async def extractTokensIfNeeded(chatid, available_logins):
     """استخراج توکن‌ها فقط در صورتی که همه اگهی‌ها نردبان شده باشند - بهینه‌سازی شده"""
     try:
         # بررسی اینکه آیا باید استخراج انجام شود
@@ -1230,7 +1281,7 @@ def extractTokensIfNeeded(chatid, available_logins):
             return
         
         # همه اگهی‌ها نردبان شده‌اند، حالا استخراج کن
-        updater.bot.send_message(chat_id=chatid, text="✅ همه اگهی‌ها نردبان شدند. در حال استخراج مجدد...")
+        await bot_send_message(chat_id=chatid, text="✅ همه اگهی‌ها نردبان شدند. در حال استخراج مجدد...")
         
         # بهینه‌سازی: یک بار بارگذاری همه توکن‌های موجود از JSON
         tokens_data = load_tokens_json()
@@ -1291,13 +1342,13 @@ def extractTokensIfNeeded(chatid, available_logins):
             summary = "📊 <b>خلاصه استخراج:</b>\n\n" + "\n".join(messages)
             if total_extracted > 0:
                 summary += f"\n\n✅ <b>جمع کل: {total_extracted} اگهی جدید استخراج شد</b>"
-            updater.bot.send_message(chat_id=chatid, text=summary, parse_mode='HTML')
+            await bot_send_message(chat_id=chatid, text=summary, parse_mode='HTML')
         else:
-            updater.bot.send_message(chat_id=chatid, text="✅ استخراج اگهی‌ها به پایان رسید.")
+            await bot_send_message(chat_id=chatid, text="✅ استخراج اگهی‌ها به پایان رسید.")
     except Exception as e:
         print(f"Error in extractTokensIfNeeded: {e}")
 
-def sendNardeban(chatid):
+async def sendNardeban(chatid):
     try:
         logins = curd.getCookies(chatid=chatid)  # 0 : Phone , 1:Cookie , 2 : used
         manageDetails = curd.getManage(chatid=chatid)
@@ -1311,11 +1362,11 @@ def sendNardeban(chatid):
         available_logins = [l for l in logins if l[2] <= int(climit)]
         
         if not available_logins:
-            updater.bot.send_message(chat_id=chatid, text="تمام لاگین‌ها به سقف نردبان رسیده‌اند.")
+            await bot_send_message(chat_id=chatid, text="تمام لاگین‌ها به سقف نردبان رسیده‌اند.")
             return
         
         # بررسی و استخراج توکن‌ها فقط در صورتی که همه اگهی‌ها نردبان شده باشند
-        extractTokensIfNeeded(chatid, available_logins)
+        await extractTokensIfNeeded(chatid, available_logins)
         
         # نوع 1: ترتیبی کامل هر لاگین
         # رفتار: هر لاگین → همه آگهی‌هاش کامل نردبان می‌شود → بعد لاگین بعدی
@@ -1327,7 +1378,7 @@ def sendNardeban(chatid):
                     # sendNardeban از آخر لیست توکن‌ها شروع می‌کند و اولین توکن pending را پیدا می‌کند
                     # استخراج خودکار در ابتدای فرایند حذف شد - فقط زمانی استخراج می‌شود که همه اگهی‌ها نردبان شده باشند
                     result = nardebanAPI.sendNardeban(number=int(l[0]), chatid=chatid)
-                    success = handleNardebanResult(result, l, chatid, nardebanAPI)
+                    success = await handleNardebanResult(result, l, chatid, nardebanAPI)
                     
                     # در هر اجرا فقط یک نردبان انجام می‌شود
                     if success:
@@ -1335,7 +1386,7 @@ def sendNardeban(chatid):
                     
                 except Exception as e:
                     print(f"Error in nardeban process for phone {l[0]}: {e}")
-                    updater.bot.send_message(chat_id=chatid, text=f"خطا در فرآیند نردبان برای شماره {l[0]}: {str(e)}")
+                    await bot_send_message(chat_id=chatid, text=f"خطا در فرآیند نردبان برای شماره {l[0]}: {str(e)}")
         
         # نوع 2: تصادفی
         # رفتار: در هر بار اجرای ربات، یک آگهی کاملاً تصادفی از بین همه لاگین‌ها انتخاب و نردبان می‌شود
@@ -1345,7 +1396,7 @@ def sendNardeban(chatid):
             
             if not all_pending:
                 # اگر توکن pending وجود نداشت
-                updater.bot.send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending برای نردبان وجود ندارد.")
+                await bot_send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending برای نردبان وجود ندارد.")
                 return
             
             # انتخاب تصادفی یک توکن از بین همه توکن‌های pending
@@ -1354,16 +1405,16 @@ def sendNardeban(chatid):
             # پیدا کردن لاگین مربوطه
             selected_login = next((l for l in available_logins if str(l[0]) == str(selected_phone)), None)
             if not selected_login:
-                updater.bot.send_message(chat_id=chatid, text=f"لاگین برای شماره {selected_phone} یافت نشد.")
+                await bot_send_message(chat_id=chatid, text=f"لاگین برای شماره {selected_phone} یافت نشد.")
                 return
             
             try:
                 nardebanAPI = nardeban(apiKey=selected_login[1])
                 result = nardebanAPI.sendNardebanWithToken(number=int(selected_phone), chatid=chatid, token=selected_token)
-                handleNardebanResult(result, selected_login, chatid, nardebanAPI)
+                await handleNardebanResult(result, selected_login, chatid, nardebanAPI)
             except Exception as e:
                 print(f"Error in random nardeban: {e}")
-                updater.bot.send_message(chat_id=chatid, text=f"خطا در نردبان تصادفی: {str(e)}")
+                await bot_send_message(chat_id=chatid, text=f"خطا در نردبان تصادفی: {str(e)}")
         
         # نوع 3: ترتیبی نوبتی
         # رفتار: از هر لاگین فقط یک آگهی → می‌ره سراغ لاگین بعدی → دوباره برمی‌گرده تا همه آگهی‌ها تمام شوند
@@ -1402,13 +1453,13 @@ def sendNardeban(chatid):
             
             if not found or not selected_login or not selected_token:
                 # اگر توکن pending وجود نداشت
-                updater.bot.send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending برای نردبان وجود ندارد.")
+                await bot_send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending برای نردبان وجود ندارد.")
                 return
             
             try:
                 nardebanAPI = nardeban(apiKey=selected_login[1])
                 result = nardebanAPI.sendNardebanWithToken(number=int(selected_login[0]), chatid=chatid, token=selected_token)
-                success = handleNardebanResult(result, selected_login, chatid, nardebanAPI)
+                success = await handleNardebanResult(result, selected_login, chatid, nardebanAPI)
                 
                 # ذخیره آخرین لاگین استفاده شده برای نوبت بعدی
                 if success:
@@ -1416,7 +1467,7 @@ def sendNardeban(chatid):
                     curd.setStatusManage(q="last_round_robin_phone", v=int(selected_login[0]), chatid=chatid)
             except Exception as e:
                 print(f"Error in round-robin nardeban: {e}")
-                updater.bot.send_message(chat_id=chatid, text=f"خطا در نردبان نوبتی: {str(e)}")
+                await bot_send_message(chat_id=chatid, text=f"خطا در نردبان نوبتی: {str(e)}")
         
         # نوع 4: جریان طبیعی (Natural Flow)
         # رفتار: آگهی‌های قدیمی‌تر اولویت می‌گیرند، آگهی‌هایی که بازدید کمتر دارند زودتر نردبان می‌شوند
@@ -1427,7 +1478,7 @@ def sendNardeban(chatid):
             
             if not all_pending:
                 # اگر توکن pending وجود نداشت
-                updater.bot.send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending برای نردبان وجود ندارد.")
+                await bot_send_message(chat_id=chatid, text="⚠️ هیچ اگهی pending برای نردبان وجود ندارد.")
                 return
             
             # انتخاب آگهی بر اساس اولویت:
@@ -1451,7 +1502,7 @@ def sendNardeban(chatid):
                     selected_candidates.append((phone, tokens[0]))
             
             if not selected_candidates:
-                updater.bot.send_message(chat_id=chatid, text="⚠️ هیچ آگهی مناسب برای نردبان یافت نشد.")
+                await bot_send_message(chat_id=chatid, text="⚠️ هیچ آگهی مناسب برای نردبان یافت نشد.")
                 return
             
             # انتخاب قدیمی‌ترین آگهی از بین همه لاگین‌ها
@@ -1462,13 +1513,13 @@ def sendNardeban(chatid):
             # پیدا کردن لاگین مربوطه
             selected_login = next((l for l in available_logins if str(l[0]) == str(selected_phone)), None)
             if not selected_login:
-                updater.bot.send_message(chat_id=chatid, text=f"لاگین برای شماره {selected_phone} یافت نشد.")
+                await bot_send_message(chat_id=chatid, text=f"لاگین برای شماره {selected_phone} یافت نشد.")
                 return
             
             try:
                 nardebanAPI = nardeban(apiKey=selected_login[1])
                 result = nardebanAPI.sendNardebanWithToken(number=int(selected_phone), chatid=chatid, token=selected_token)
-                success = handleNardebanResult(result, selected_login, chatid, nardebanAPI)
+                success = await handleNardebanResult(result, selected_login, chatid, nardebanAPI)
                 
                 # اگر موفق بود، زمان‌بندی بعدی را با فاصله نامنظم تنظیم کن
                 if success:
@@ -1479,21 +1530,21 @@ def sendNardeban(chatid):
                     global scheduler
                     scheduler.add_job(sendNardeban, "date", args=[chatid], 
                                    run_date=datetime.now() + timedelta(minutes=next_interval))
-                    updater.bot.send_message(chat_id=chatid, 
+                    await bot_send_message(chat_id=chatid, 
                                      text=f"⏰ نردبان بعدی در {next_interval} دقیقه انجام می‌شود.")
             except Exception as e:
                 print(f"Error in natural flow nardeban: {e}")
-                updater.bot.send_message(chat_id=chatid, text=f"خطا در نردبان جریان طبیعی: {str(e)}")
+                await bot_send_message(chat_id=chatid, text=f"خطا در نردبان جریان طبیعی: {str(e)}")
 
     except Exception as e:
         try:
-            updater.bot.send_message(chat_id=chatid,
+            await bot_send_message(chat_id=chatid,
                              text=f"در فرایند اولیه شروع نردبان مشکلی وجود دارد ، متن ارور : {str(e)}")
             print(e)
         except Exception as e:
             print(f"Error sending message: {e}")
 
-def handleNardebanResult(result, login_info, chatid, nardebanAPI):
+async def handleNardebanResult(result, login_info, chatid, nardebanAPI):
     """تابع helper برای مدیریت نتیجه نردبان - برمی‌گرداند True اگر موفق بود"""
     if result[0] == 1:
         # به‌روزرسانی وضعیت توکن به success بعد از نردبان موفق
@@ -1516,10 +1567,12 @@ def handleNardebanResult(result, login_info, chatid, nardebanAPI):
         
         # اگر موفقیت‌آمیز بود
         try:
-            updater.bot.send_message(chat_id=chatid,
-                             text=f"آگهی {str(result[1])} از شماره {str(result[2])} نردبان شد.")
-            updater.bot.send_message(chat_id=chatid,
-                             text=f"از شماره {str(result[2])} تا به حال تعداد {str(updated_login[2])} آگهی نردبان شده است.")
+            bot = get_bot()
+            if bot:
+                await bot.send_message(chat_id=chatid,
+                                 text=f"آگهی {str(result[1])} از شماره {str(result[2])} نردبان شد.")
+                await bot.send_message(chat_id=chatid,
+                                 text=f"از شماره {str(result[2])} تا به حال تعداد {str(updated_login[2])} آگهی نردبان شده است.")
         except Exception as e:
             print(f"Error sending message: {e}")
         return True
@@ -1535,40 +1588,40 @@ def handleNardebanResult(result, login_info, chatid, nardebanAPI):
                 print(f"⚠️ توکن {error_token} به وضعیت failed تغییر یافت")
         
         print(f"Failed to nardeban ad with token {error_token}: {error_msg}")
-        updater.bot.send_message(chat_id=chatid,
+        await bot_send_message(chat_id=chatid,
                          text=f"نردبان آگهی با توکن {str(error_token)} با مشکل مواجه شد.\nخطا: {str(error_msg)}")
         return False
     elif result[0] == 2:
         # اگر هیچ پستی موجود نبود
         error_msg = result[1] if len(result) > 1 else "هیچ اگهی برای نردبان پیدا نشد."
-        updater.bot.send_message(chat_id=chatid, text=str(error_msg))
+        await bot_send_message(chat_id=chatid, text=str(error_msg))
         return False
     else:
         # سایر خطاها
         error_msg = result[1] if len(result) > 1 else "خطای نامشخص"
-        updater.bot.send_message(chat_id=chatid, text=str(error_msg))
+        await bot_send_message(chat_id=chatid, text=str(error_msg))
         return False
 
-def remJob(sch, id, chatid):
+async def remJob(sch, id, chatid):
     try:
-        updater.bot.send_message(chat_id=chatid, text="عملیات نردبان شما با موفقیت به پایان رسید !")
+        await bot_send_message(chat_id=chatid, text="عملیات نردبان شما با موفقیت به پایان رسید !")
         sch.remove_job(id)
         curd.removeJob(chatid=chatid)
         refreshUsed(chatid=chatid)
     except Exception as e:
         try:
-            updater.bot.send_message(chat_id=chatid,
+            await bot_send_message(chat_id=chatid,
                              text=f"در فرایند حذف فرایند زمان بندی نردبان مشکلی وجود دارد ، متن ارور : {str(e)}")
             print(e)
         except Exception as e:
             print(f"Error sending message: {e}")
 
-def reExtractTokens(chatid):
+async def reExtractTokens(chatid):
     """استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال"""
     try:
         logins = curd.getCookies(chatid=chatid)  # 0 : Phone , 1:Cookie , 2 : used
         if not logins:
-            updater.bot.send_message(chat_id=chatid, text="⚠️ هیچ لاگین فعالی برای استخراج وجود ندارد.")
+            await bot_send_message(chat_id=chatid, text="⚠️ هیچ لاگین فعالی برای استخراج وجود ندارد.")
             return
         
         total_extracted = 0
@@ -1581,7 +1634,7 @@ def reExtractTokens(chatid):
                 brandToken = nardebanAPI.getBranToken()
                 
                 if not brandToken:
-                    updater.bot.send_message(chat_id=chatid, 
+                    await bot_send_message(chat_id=chatid, 
                                                      text=f"❌ خطا در دریافت brand token برای شماره {l[0]}")
                     failed_count += 1
                     continue
@@ -1602,20 +1655,20 @@ def reExtractTokens(chatid):
                         
                         total_extracted += new_count
                         success_count += 1
-                        updater.bot.send_message(chat_id=chatid,
+                        await bot_send_message(chat_id=chatid,
                                                      text=f"✅ از شماره {l[0]}: {new_count} اگهی جدید استخراج و در JSON ذخیره شد.")
                     else:
-                        updater.bot.send_message(chat_id=chatid,
+                        await bot_send_message(chat_id=chatid,
                                                      text=f"ℹ️ از شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند.")
                         success_count += 1
                 else:
-                    updater.bot.send_message(chat_id=chatid,
+                    await bot_send_message(chat_id=chatid,
                                                      text=f"⚠️ از شماره {l[0]}: هیچ اگهی‌ای یافت نشد.")
                     failed_count += 1
                     
             except Exception as e:
                 print(f"Error extracting tokens for phone {l[0]}: {e}")
-                updater.bot.send_message(chat_id=chatid,
+                await bot_send_message(chat_id=chatid,
                                                  text=f"❌ خطا در استخراج برای شماره {l[0]}: {str(e)}")
                 failed_count += 1
         
@@ -1625,11 +1678,11 @@ def reExtractTokens(chatid):
 ✅ موفق: {success_count} لاگین
 ❌ ناموفق: {failed_count} لاگین
 📦 کل اگهی‌های استخراج شده: {total_extracted}"""
-        updater.bot.send_message(chat_id=chatid, text=summary, parse_mode='HTML')
+        await bot_send_message(chat_id=chatid, text=summary, parse_mode='HTML')
         
     except Exception as e:
         print(f"Error in reExtractTokens: {e}")
-        updater.bot.send_message(chat_id=chatid, text=f"❌ خطا در فرآیند استخراج مجدد: {str(e)}")
+        await bot_send_message(chat_id=chatid, text=f"❌ خطا در فرآیند استخراج مجدد: {str(e)}")
 
 def refreshUsed(chatid):
     """بازنشانی وضعیت استفاده شده - بدون حذف اگهی‌های استخراج شده"""
@@ -1642,48 +1695,59 @@ def refreshUsed(chatid):
     # for n in numbers:
     #     curd.delete_tokens_by_phone(phone=n)
 
-scheduler = BackgroundScheduler(timezone="Asia/Tehran")
+def build_application():
+    global application_instance
+    application = (
+        ApplicationBuilder()
+        .token(Datas.token)
+        .rate_limiter(AIORateLimiter())
+        .build()
+    )
+    application_instance = application
 
-# اضافه کردن handler ها به dispatcher
-dispatcher.add_handler(CommandHandler('start', start))
-dispatcher.add_handler(CommandHandler('end', shoro))
-dispatcher.add_handler(CommandHandler('add', addadmin, filters=Filters.user(user_id=Datas.admin)))
-dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, mainMenu))
-dispatcher.add_handler(CallbackQueryHandler(qrycall))
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('end', shoro))
+    application.add_handler(CommandHandler('add', addadmin, filters=filters.User(user_id=Datas.admin)))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mainMenu))
+    application.add_handler(CallbackQueryHandler(qrycall))
 
-# اجرای ربات
+    application.post_init = on_startup
+    application.post_shutdown = on_shutdown
+    return application
+
+
+async def on_startup(application: Application):
+    print("🚀 Application post_init - starting scheduler")
+    loop = asyncio.get_running_loop()
+    scheduler.configure(event_loop=loop)
+    if not scheduler.running:
+        scheduler.start()
+
+
+async def on_shutdown(application: Application):
+    print("🛑 Application shutting down - stopping scheduler")
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+
+
+def main():
+    print("=" * 50)
+    print("🤖 در حال راه‌اندازی ربات تلگرام...")
+    print("=" * 50)
+    application = build_application()
+    application.run_polling(
+        poll_interval=1.0,
+        timeout=10,
+        bootstrap_retries=3,
+        close_loop=False,
+    )
+
+
 if __name__ == '__main__':
     try:
-        print("=" * 50)
-        print("🤖 در حال راه‌اندازی ربات تلگرام...")
-        print("=" * 50)
-        
-        # شروع scheduler
-        if not scheduler.running:
-            scheduler.start()
-        
-        # شروع polling با تنظیمات مناسب
-        # start_polling() برای PTB 12.8
-        print("🔄 در حال شروع polling...")
-        updater.start_polling(
-            poll_interval=1.0,  # فاصله بین polling ها (ثانیه)
-            timeout=10,         # timeout برای هر درخواست
-            bootstrap_retries=3  # تعداد تلاش برای اتصال اولیه
-        )
-        updater.idle()  # نگه داشتن ربات در حال اجرا
-        print("✅ ربات با موفقیت راه‌اندازی شد!")
-        print("🔄 ربات در حال اجرا است. برای توقف از Ctrl+C استفاده کنید.")
-        print("=" * 50)
+        main()
     except KeyboardInterrupt:
         print("\n⚠️ ربات توسط کاربر متوقف شد.")
-        try:
-            updater.stop()
-        except:
-            pass
-        try:
-            scheduler.shutdown()
-        except:
-            pass
         sys.exit(0)
     except Exception as e:
         print(f"\n❌ خطا در اتصال به تلگرام: {e}")
