@@ -6,8 +6,16 @@
 
 import json
 import os
+import threading
+from datetime import datetime, timedelta
 
 TOKENS_JSON_FILE = "tokens.json"
+
+# Cache برای JSON - بهبود performance
+_tokens_cache = {}
+_cache_lock = threading.Lock()
+_cache_last_modified = None
+_cache_ttl = timedelta(seconds=5)  # Cache برای 5 ثانیه معتبر است
 
 def _create_empty_json_file():
     """ایجاد فایل JSON خالی"""
@@ -56,70 +64,110 @@ def _migrate_old_format_to_new(data):
         print(f"⚠️ خطا در تبدیل ساختار قدیمی: {e}")
         return data
 
-def load_tokens_json():
-    """بارگذاری توکن‌ها از فایل JSON"""
-    try:
-        if os.path.exists(TOKENS_JSON_FILE):
-            with open(TOKENS_JSON_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+def load_tokens_json(force_reload=False):
+    """بارگذاری توکن‌ها از فایل JSON با cache"""
+    global _tokens_cache, _cache_last_modified
+    
+    with _cache_lock:
+        # بررسی cache
+        if not force_reload and _tokens_cache and _cache_last_modified:
+            # بررسی اینکه آیا فایل تغییر کرده است
+            try:
+                file_mtime = os.path.getmtime(TOKENS_JSON_FILE) if os.path.exists(TOKENS_JSON_FILE) else 0
+                file_modified = datetime.fromtimestamp(file_mtime)
                 
-                # تبدیل کلیدهای string به int برای سازگاری
-                result = {}
-                for chatid_str, phones in data.items():
-                    chatid_int = int(chatid_str)
-                    result[chatid_int] = {}
-                    for phone_str, tokens in phones.items():
-                        phone_int = int(phone_str)
-                        result[chatid_int][phone_int] = tokens
-                
-                # تبدیل ساختار قدیمی به جدید (اگر لازم باشد)
-                result = _migrate_old_format_to_new(result)
-                return result
-        else:
-            # اگر فایل وجود ندارد، یک فایل خالی ایجاد کن
-            print(f"ℹ️ فایل {TOKENS_JSON_FILE} وجود ندارد. فایل خالی ایجاد می‌شود.")
+                # اگر cache معتبر است و فایل تغییر نکرده
+                if datetime.now() - _cache_last_modified < _cache_ttl and file_modified <= _cache_last_modified:
+                    return _tokens_cache.copy()  # برگرداندن کپی برای جلوگیری از تغییر cache
+            except:
+                pass  # در صورت خطا، از دیسک بخوان
+        
+        # بارگذاری از دیسک
+        try:
+            if os.path.exists(TOKENS_JSON_FILE):
+                with open(TOKENS_JSON_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    
+                    # تبدیل کلیدهای string به int برای سازگاری
+                    result = {}
+                    for chatid_str, phones in data.items():
+                        chatid_int = int(chatid_str)
+                        result[chatid_int] = {}
+                        for phone_str, tokens in phones.items():
+                            phone_int = int(phone_str)
+                            result[chatid_int][phone_int] = tokens
+                    
+                    # تبدیل ساختار قدیمی به جدید (اگر لازم باشد)
+                    result = _migrate_old_format_to_new(result)
+                    
+                    # به‌روزرسانی cache
+                    _tokens_cache = result
+                    _cache_last_modified = datetime.now()
+                    
+                    return result.copy()  # برگرداندن کپی
+            else:
+                # اگر فایل وجود ندارد، یک فایل خالی ایجاد کن
+                print(f"ℹ️ فایل {TOKENS_JSON_FILE} وجود ندارد. فایل خالی ایجاد می‌شود.")
+                _create_empty_json_file()
+                _tokens_cache = {}
+                _cache_last_modified = datetime.now()
+                return {}
+        except Exception as e:
+            print(f"❌ خطا در بارگذاری tokens.json: {e}")
+            import traceback
+            traceback.print_exc()
+            # در صورت خطا، یک فایل خالی ایجاد کن
             _create_empty_json_file()
+            _tokens_cache = {}
+            _cache_last_modified = datetime.now()
             return {}
-    except Exception as e:
-        print(f"❌ خطا در بارگذاری tokens.json: {e}")
-        import traceback
-        traceback.print_exc()
-        # در صورت خطا، یک فایل خالی ایجاد کن
-        _create_empty_json_file()
-        return {}
 
 def save_tokens_json(tokens_data):
     """ذخیره توکن‌ها در فایل JSON - اگر فایل وجود نداشت، ایجاد می‌شود"""
-    try:
-        # تبدیل کلیدهای int به string برای JSON
-        data = {}
-        for chatid, phones in tokens_data.items():
-            data[str(chatid)] = {}
-            for phone, status_dict in phones.items():
-                data[str(chatid)][str(phone)] = status_dict
-        
-        # اگر data خالی است، یک ساختار خالی ایجاد کن
-        if not data:
-            data = {}
-        
-        # ایجاد فایل JSON (حتی اگر خالی باشد) - اگر وجود نداشت، خودکار ایجاد می‌شود
-        with open(TOKENS_JSON_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        
-        # بررسی اینکه فایل واقعاً ایجاد شده است
-        if os.path.exists(TOKENS_JSON_FILE):
-            print(f"✅ فایل {TOKENS_JSON_FILE} با موفقیت ذخیره شد.")
-        else:
-            print(f"⚠️ فایل {TOKENS_JSON_FILE} ایجاد نشد!")
-    except Exception as e:
-        print(f"❌ خطا در ذخیره tokens.json: {e}")
-        import traceback
-        traceback.print_exc()
-        # در صورت خطا، سعی کن فایل خالی ایجاد کنی
+    global _tokens_cache, _cache_last_modified
+    
+    with _cache_lock:
         try:
-            _create_empty_json_file()
-        except:
-            pass
+            # تبدیل کلیدهای int به string برای JSON
+            data = {}
+            for chatid, phones in tokens_data.items():
+                data[str(chatid)] = {}
+                for phone, status_dict in phones.items():
+                    data[str(chatid)][str(phone)] = status_dict
+            
+            # اگر data خالی است، یک ساختار خالی ایجاد کن
+            if not data:
+                data = {}
+            
+            # ایجاد فایل JSON (حتی اگر خالی باشد) - اگر وجود نداشت، خودکار ایجاد می‌شود
+            with open(TOKENS_JSON_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            
+            # به‌روزرسانی cache
+            _tokens_cache = tokens_data.copy()
+            _cache_last_modified = datetime.now()
+            
+            # بررسی اینکه فایل واقعاً ایجاد شده است
+            if os.path.exists(TOKENS_JSON_FILE):
+                print(f"✅ فایل {TOKENS_JSON_FILE} با موفقیت ذخیره شد.")
+            else:
+                print(f"⚠️ فایل {TOKENS_JSON_FILE} ایجاد نشد!")
+        except Exception as e:
+            print(f"❌ خطا در ذخیره tokens.json: {e}")
+            import traceback
+            traceback.print_exc()
+            # در صورت خطا، سعی کن فایل خالی ایجاد کنی
+            try:
+                _create_empty_json_file()
+            except:
+                pass
+
+def invalidate_cache():
+    """باطل کردن cache - برای استفاده در صورت نیاز به reload فوری"""
+    global _tokens_cache, _cache_last_modified
+    with _cache_lock:
+        _tokens_cache = {}
+        _cache_last_modified = None
 
 def add_tokens_to_json(chatid, phone, tokens):
     """اضافه کردن توکن‌ها به JSON با وضعیت pending"""

@@ -1117,7 +1117,7 @@ def shouldExtractTokens(chatid, available_logins):
         return False
 
 def extractTokensIfNeeded(chatid, available_logins):
-    """استخراج توکن‌ها فقط در صورتی که همه اگهی‌ها نردبان شده باشند"""
+    """استخراج توکن‌ها فقط در صورتی که همه اگهی‌ها نردبان شده باشند - بهینه‌سازی شده"""
     try:
         # بررسی اینکه آیا باید استخراج انجام شود
         if not shouldExtractTokens(chatid, available_logins):
@@ -1126,45 +1126,68 @@ def extractTokensIfNeeded(chatid, available_logins):
         # همه اگهی‌ها نردبان شده‌اند، حالا استخراج کن
         updater.bot.send_message(chat_id=chatid, text="✅ همه اگهی‌ها نردبان شدند. در حال استخراج مجدد...")
         
+        # بهینه‌سازی: یک بار بارگذاری همه توکن‌های موجود از JSON
+        tokens_data = load_tokens_json()
+        all_existing_tokens = set()
+        if chatid in tokens_data:
+            for phone_data in tokens_data[chatid].values():
+                if isinstance(phone_data, dict):
+                    all_existing_tokens.update(phone_data.get("pending", []))
+                    all_existing_tokens.update(phone_data.get("success", []))
+                    all_existing_tokens.update(phone_data.get("failed", []))
+        
+        # جمع‌آوری پیام‌ها برای ارسال یکجا
+        messages = []
+        total_extracted = 0
+        
         for l in available_logins:
             try:
                 nardebanAPI = nardeban(apiKey=l[1])
                 brandToken = nardebanAPI.getBranToken()
                 
                 if not brandToken:
-                    updater.bot.send_message(chat_id=chatid, 
-                                     text=f"❌ خطا در دریافت brand token برای شماره {l[0]}")
+                    messages.append(f"❌ شماره {l[0]}: خطا در دریافت brand token")
                     continue
                 
                 # استخراج توکن‌های جدید
                 tokens = nardebanAPI.get_all_tokens(brand_token=brandToken)
                 
                 if tokens:
-                    # ذخیره توکن‌ها در JSON
-                    new_count = add_tokens_to_json(chatid=chatid, phone=int(l[0]), tokens=tokens)
+                    # فیلتر کردن توکن‌های جدید (بهینه‌سازی: استفاده از set)
+                    new_tokens = [t for t in tokens if t not in all_existing_tokens]
                     
-                    if new_count > 0:
-                        # همچنین در دیتابیس هم ذخیره کن (برای سازگاری)
-                        existing_tokens = curd.get_tokens_by_phone(phone=int(l[0]))
-                        new_tokens = [t for t in tokens if t not in existing_tokens]
-                        if new_tokens:
-                            curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
+                    if new_tokens:
+                        # ذخیره توکن‌ها در JSON
+                        new_count = add_tokens_to_json(chatid=chatid, phone=int(l[0]), tokens=new_tokens)
                         
-                        updater.bot.send_message(chat_id=chatid,
-                                         text=f"✅ از شماره {l[0]}: {new_count} اگهی جدید استخراج و در JSON ذخیره شد.")
+                        if new_count > 0:
+                            # به‌روزرسانی set برای بررسی سریع‌تر در آینده
+                            all_existing_tokens.update(new_tokens)
+                            
+                            # همچنین در دیتابیس هم ذخیره کن (برای سازگاری)
+                            curd.insert_tokens_by_phone(phone=int(l[0]), tokens=new_tokens)
+                            
+                            total_extracted += new_count
+                            messages.append(f"✅ شماره {l[0]}: {new_count} اگهی جدید")
+                        else:
+                            messages.append(f"ℹ️ شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند")
                     else:
-                        updater.bot.send_message(chat_id=chatid,
-                                         text=f"ℹ️ از شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند.")
+                        messages.append(f"ℹ️ شماره {l[0]}: همه اگهی‌ها قبلاً استخراج شده بودند")
                 else:
-                    updater.bot.send_message(chat_id=chatid,
-                                     text=f"⚠️ از شماره {l[0]}: هیچ اگهی‌ای یافت نشد.")
+                    messages.append(f"⚠️ شماره {l[0]}: هیچ اگهی‌ای یافت نشد")
                     
             except Exception as e:
                 print(f"Error extracting tokens for phone {l[0]}: {e}")
-                updater.bot.send_message(chat_id=chatid,
-                                 text=f"❌ خطا در استخراج برای شماره {l[0]}: {str(e)}")
+                messages.append(f"❌ شماره {l[0]}: خطا - {str(e)[:50]}")
         
-        updater.bot.send_message(chat_id=chatid, text="✅ استخراج اگهی‌ها به پایان رسید.")
+        # ارسال پیام‌های جمع‌آوری شده
+        if messages:
+            summary = "📊 <b>خلاصه استخراج:</b>\n\n" + "\n".join(messages)
+            if total_extracted > 0:
+                summary += f"\n\n✅ <b>جمع کل: {total_extracted} اگهی جدید استخراج شد</b>"
+            updater.bot.send_message(chat_id=chatid, text=summary, parse_mode='HTML')
+        else:
+            updater.bot.send_message(chat_id=chatid, text="✅ استخراج اگهی‌ها به پایان رسید.")
     except Exception as e:
         print(f"Error in extractTokensIfNeeded: {e}")
 
