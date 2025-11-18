@@ -284,32 +284,91 @@ def start(update: Update, context: CallbackContext):
             curd.addAdmin(chatid=chat_id)
             curd.addManage(chatid=chat_id)
             mngDetail = curd.getManage(chatid=chat_id)
-            if mngDetail[0] == 0:
-                botStatus = ["✅ روشن کردن ربات ✅", "setactive:1"]
-            else:
-                botStatus = ["❌ خاموش کردن ربات ❌", "setactive:0"]
-
+            
             # دریافت آمار اگهی‌ها
             stats = curd.getStats(chatid=chat_id)
-            stats_text = f"📊 نردبان: {stats['total_nardeban']} | کل: {stats['total_tokens']} | انتظار: {stats['total_pending']}"
-
+            
+            # تعیین وضعیت ربات
+            is_active = mngDetail[0] == 1
+            status_emoji = "🟢" if is_active else "🔴"
+            status_text = "فعال" if is_active else "غیرفعال"
+            
             # تعیین نوع نردبان فعلی
             nardeban_type = mngDetail[3] if len(mngDetail) > 3 else 1
             type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
             type_name = type_names.get(nardeban_type, "ترتیبی کامل")
+            
+            # بررسی وجود job فعال
+            has_job = curd.getJob(chatid=chat_id) is not None
+            job_status = "🔄 در حال اجرا" if has_job else "⏸️ متوقف"
+            
+            # ساخت پیام خوش‌آمدگویی
+            welcome_text = f"""🤖 <b>منوی مدیریت ربات نردبان</b>
 
-            btns = [
-                [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
-                [InlineKeyboardButton(stats_text, callback_data='stats_info')],
-                [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
-                [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
-                [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
-                [InlineKeyboardButton('🔄 استخراج مجدد اگهی‌ها', callback_data='reExtract')],
-                [InlineKeyboardButton('غیر فعال کردن نردبان', callback_data='remJob')],
-            ]
+{status_emoji} <b>وضعیت:</b> {status_text}
+📊 <b>آمار کلی:</b>
+   ✅ نردبان شده: <b>{stats['total_nardeban']}</b>
+   📦 کل استخراج: <b>{stats['total_tokens']}</b>
+   ⏳ در انتظار: <b>{stats['total_pending']}</b>
+   ❌ ناموفق: <b>{stats.get('total_failed', 0)}</b>
+
+⚙️ <b>تنظیمات:</b>
+   🔽 سقف نردبان: <b>{mngDetail[1]}</b>
+   🎯 نوع نردبان: <b>{type_name}</b>
+   {job_status}
+
+👇 <i>لطفاً یکی از گزینه‌های زیر را انتخاب کنید:</i>"""
+
+            # ساخت دکمه‌های منو با گروه‌بندی بهتر
+            btns = []
+            
+            # بخش کنترل ربات
+            btns.append([
+                InlineKeyboardButton(
+                    f"{'🟢' if is_active else '🔴'} {'خاموش کردن' if is_active else 'روشن کردن'} ربات",
+                    callback_data="setactive:1" if not is_active else "setactive:0"
+                )
+            ])
+            
+            # بخش آمار و اطلاعات
+            btns.append([
+                InlineKeyboardButton('📊 مشاهده آمار کامل', callback_data='stats_info')
+            ])
+            
+            # بخش مدیریت
+            btns.append([
+                InlineKeyboardButton('📱 مدیریت لاگین‌ها', callback_data='managelogin')
+            ])
+            
+            # بخش تنظیمات
+            btns.append([
+                InlineKeyboardButton(f'🔽 سقف نردبان: {mngDetail[1]}', callback_data='setlimit'),
+                InlineKeyboardButton(f'⚙️ نوع: {type_name[:10]}', callback_data='setNardebanType')
+            ])
+            
+            # بخش عملیات
+            btns.append([
+                InlineKeyboardButton('🔄 استخراج مجدد', callback_data='reExtract'),
+                InlineKeyboardButton('⏹️ توقف نردبان', callback_data='remJob')
+            ])
+            
+            # بخش مدیریت ادمین (فقط برای ادمین اصلی)
             if int(chat_id) == int(Datas.admin):
-                btns.append([InlineKeyboardButton('مدیریت ادمین ها',callback_data='manageAdmins')])
-            context.bot.send_message(chat_id=chat_id, text="🔥 M E N U : 👇", reply_markup=InlineKeyboardMarkup(btns))
+                btns.append([
+                    InlineKeyboardButton('👥 مدیریت ادمین‌ها', callback_data='manageAdmins')
+                ])
+            
+            # دکمه راهنما
+            btns.append([
+                InlineKeyboardButton('❓ راهنما', callback_data='help_menu')
+            ])
+            
+            context.bot.send_message(
+                chat_id=chat_id, 
+                text=welcome_text, 
+                reply_markup=InlineKeyboardMarkup(btns),
+                parse_mode='HTML'
+            )
             print(f"✅ منو برای کاربر {chat_id} ارسال شد")
         else:
             # اگر کاربر ادمین نبود → یک پیام و کیبورد بفرستد
@@ -478,24 +537,29 @@ def qrycall(update: Update, context: CallbackContext):
             print(f"📊 [stats_info] آمار دریافت شده: نردبان={stats['total_nardeban']}, کل={stats['total_tokens']}, انتظار={stats['total_pending']}")
             
             # ساخت پیام با آمار هر لاگین
-            stats_msg = "📊 <b>آمار به‌روز اگهی‌های شما:</b>\n\n"
+            stats_msg = "📊 <b>آمار کامل اگهی‌های شما</b>\n\n"
             
             # آمار هر لاگین
             if stats['login_stats']:
                 for login_stat in stats['login_stats']:
                     stats_msg += f"📱 <b>شماره {login_stat['phone']}:</b>\n"
-                    stats_msg += f"   ✅ نردبان شده: {login_stat['nardeban_count']}\n"
-                    stats_msg += f"   📦 کل استخراج شده: {login_stat['total_tokens']}\n"
-                    stats_msg += f"   ⏳ در انتظار: {login_stat['pending_count']}\n\n"
+                    stats_msg += f"   ✅ نردبان شده: <b>{login_stat['nardeban_count']}</b>\n"
+                    stats_msg += f"   📦 کل استخراج: <b>{login_stat['total_tokens']}</b>\n"
+                    stats_msg += f"   ⏳ در انتظار: <b>{login_stat['pending_count']}</b>\n"
+                    if login_stat.get('failed_count', 0) > 0:
+                        stats_msg += f"   ❌ ناموفق: <b>{login_stat['failed_count']}</b>\n"
+                    stats_msg += "\n"
             else:
                 stats_msg += "⚠️ هیچ لاگینی ثبت نشده است.\n\n"
             
             # جمع کل
             stats_msg += "━━━━━━━━━━━━━━━━\n"
             stats_msg += f"📊 <b>جمع کل:</b>\n"
-            stats_msg += f"   ✅ نردبان شده: {stats['total_nardeban']}\n"
-            stats_msg += f"   📦 کل استخراج شده: {stats['total_tokens']}\n"
-            stats_msg += f"   ⏳ در انتظار: {stats['total_pending']}"
+            stats_msg += f"   ✅ نردبان شده: <b>{stats['total_nardeban']}</b>\n"
+            stats_msg += f"   📦 کل استخراج: <b>{stats['total_tokens']}</b>\n"
+            stats_msg += f"   ⏳ در انتظار: <b>{stats['total_pending']}</b>\n"
+            if stats.get('total_failed', 0) > 0:
+                stats_msg += f"   ❌ ناموفق: <b>{stats['total_failed']}</b>"
             
             # ساخت منوی فرعی برای آمار
             stats_menu_buttons = [
@@ -687,19 +751,26 @@ def qrycall(update: Update, context: CallbackContext):
                 qry.answer()
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
+            
+            type_info_text = """⚙️ <b>انتخاب نوع نردبان</b>
+
+<b>1️⃣ ترتیبی کامل هر لاگین:</b>
+   هر لاگین → همه آگهی‌هاش کامل نردبان می‌شود → بعد لاگین بعدی
+
+<b>2️⃣ تصادفی:</b>
+   در هر بار اجرای ربات، یک آگهی کاملاً تصادفی از بین همه لاگین‌ها انتخاب و نردبان می‌شود
+
+<b>3️⃣ ترتیبی نوبتی:</b>
+   از هر لاگین فقط یک آگهی → می‌ره سراغ لاگین بعدی → دوباره برمی‌گرده تا همه آگهی‌ها تمام شوند
+
+<b>🎢 4️⃣ جریان طبیعی:</b>
+   آگهی‌های قدیمی‌تر اولویت می‌گیرند
+   آگهی‌هایی که بازدید کمتر دارند زودتر نردبان می‌شوند
+   فاصله زمانی بین نردبان‌ها کاملاً نامنظم است"""
+            
             context.bot.send_message(
                 chat_id=chatid,
-                text="⚙️ <b>انتخاب نوع نردبان:</b>\n\n"
-                     "1️⃣ <b>ترتیبی کامل هر لاگین:</b>\n"
-                     "   هر لاگین → همه آگهی‌هاش کامل نردبان می‌شود → بعد لاگین بعدی\n\n"
-                     "2️⃣ <b>تصادفی:</b>\n"
-                     "   در هر بار اجرای ربات، یک آگهی کاملاً تصادفی از بین همه لاگین‌ها انتخاب و نردبان می‌شود\n\n"
-                     "3️⃣ <b>ترتیبی نوبتی:</b>\n"
-                     "   از هر لاگین فقط یک آگهی → می‌ره سراغ لاگین بعدی → دوباره برمی‌گرده تا همه آگهی‌ها تمام شوند\n\n"
-                     "🎢 4️⃣ <b>جریان طبیعی:</b>\n"
-                     "   آگهی‌های قدیمی‌تر اولویت می‌گیرند\n"
-                     "   آگهی‌هایی که بازدید کمتر دارند زودتر نردبان می‌شوند\n"
-                     "   فاصله زمانی بین نردبان‌ها کاملاً نامنظم است",
+                text=type_info_text,
                 reply_markup=InlineKeyboardMarkup(type_buttons),
                 parse_mode='HTML'
             )
@@ -718,6 +789,47 @@ def qrycall(update: Update, context: CallbackContext):
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             start(update, context)
+        elif data == "help_menu":
+            try:
+                qry.answer()
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
+            
+            help_text = """📖 <b>راهنمای استفاده از ربات</b>
+
+<b>🔹 شروع کار:</b>
+1️⃣ ابتدا لاگین‌های دیوار را اضافه کنید
+2️⃣ سقف تعداد نردبان را تنظیم کنید
+3️⃣ نوع نردبان را انتخاب کنید
+4️⃣ ربات را روشن کنید
+5️⃣ با دستور /end نردبان را شروع کنید
+
+<b>🔹 انواع نردبان:</b>
+1️⃣ <b>ترتیبی کامل:</b> هر لاگین → همه آگهی‌هاش → بعد لاگین بعدی
+2️⃣ <b>تصادفی:</b> در هر بار یک آگهی کاملاً تصادفی
+3️⃣ <b>ترتیبی نوبتی:</b> از هر لاگین یک آگهی → نوبتی
+4️⃣ <b>جریان طبیعی:</b> آگهی‌های قدیمی‌تر اولویت دارند
+
+<b>🔹 دستورات:</b>
+/start - نمایش منو
+/end=ساعت - شروع نردبان تا ساعت مشخص (0-23)
+
+<b>🔹 نکات مهم:</b>
+• اگهی‌های استخراج شده حفظ می‌شوند
+• نردبان از اگهی‌های pending شروع می‌شود
+• در صورت تمام شدن، استخراج مجدد انجام می‌شود
+• آمار همیشه به‌روز است"""
+            
+            help_buttons = [
+                [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
+            ]
+            
+            context.bot.send_message(
+                chat_id=chatid,
+                text=help_text,
+                reply_markup=InlineKeyboardMarkup(help_buttons),
+                parse_mode='HTML'
+            )
         elif data == "manageAdmins":
             # فقط ادمین پیش‌فرض می‌تواند ادمین‌ها را مدیریت کند
             admin_int = int(Datas.admin) if Datas.admin is not None else None
@@ -756,49 +868,39 @@ def qrycall(update: Update, context: CallbackContext):
                     qry.answer()  # پاسخ به callback
                 except Exception as e:
                     print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-                qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(newKeyAdmins))
+                
+                # اضافه کردن دکمه بازگشت
+                newKeyAdmins.append([InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')])
+                
+                admin_text = "👥 <b>مدیریت ادمین‌ها</b>\n\n"
+                admin_text += "⭐ = ادمین پیش‌فرض (غیرقابل حذف)\n"
+                admin_text += "🗣 = ادمین عادی\n"
+                admin_text += "❌ = حذف ادمین"
+                
+                context.bot.send_message(
+                    chat_id=chatid,
+                    text=admin_text,
+                    reply_markup=InlineKeyboardMarkup(newKeyAdmins),
+                    parse_mode='HTML'
+                )
             else:
-                qry.answer(text="هیچ ادمینی وجود ندارد .", show_alert=True)
+                qry.answer(text="هیچ ادمینی وجود ندارد.", show_alert=True)
         elif data.startswith("setactive"):
             value = data.split(":")[1]
             if value == "1":
                 curd.setStatusManage(q="active", v=1, chatid=chatid)
+                status_msg = "✅ ربات روشن شد"
             else:
                 curd.setStatusManage(q="active", v=0, chatid=chatid)
-            
-            # ساخت منو جدید از ابتدا (نه از keyboard موجود)
-            mngDetail = curd.getManage(chatid=chatid)
-            if mngDetail[0] == 0:
-                botStatus = ["✅ روشن کردن ربات ✅", "setactive:1"]
-            else:
-                botStatus = ["❌ خاموش کردن ربات ❌", "setactive:0"]
-            
-            # دریافت آمار به‌روز شده
-            stats = curd.getStats(chatid=chatid)
-            stats_text = f"📊 نردبان: {stats['total_nardeban']} | کل: {stats['total_tokens']} | انتظار: {stats['total_pending']}"
-            
-            # تعیین نوع نردبان فعلی
-            nardeban_type = mngDetail[3] if len(mngDetail) > 3 else 1
-            type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
-            type_name = type_names.get(nardeban_type, "ترتیبی کامل")
-            
-            btns = [
-                [InlineKeyboardButton(botStatus[0], callback_data=botStatus[1])],
-                [InlineKeyboardButton(stats_text, callback_data='stats_info')],
-                [InlineKeyboardButton('🗣 مدیریت لاگین های دیوار 🗣', callback_data='managelogin')],
-                [InlineKeyboardButton(f'🔽 سقف تعداد نردبان : {str(mngDetail[1])} 🔽', callback_data='setlimit')],
-                [InlineKeyboardButton(f'⚙️ نوع نردبان: {type_name}', callback_data='setNardebanType')],
-                [InlineKeyboardButton('🔄 استخراج مجدد اگهی‌ها', callback_data='reExtract')],
-                [InlineKeyboardButton('غیر فعال کردن نردبان', callback_data='remJob')],
-            ]
-            if int(chatid) == int(Datas.admin):
-                btns.append([InlineKeyboardButton('مدیریت ادمین ها',callback_data='manageAdmins')])
+                status_msg = "❌ ربات خاموش شد"
             
             try:
-                qry.answer()  # پاسخ به callback
+                qry.answer(text=status_msg, show_alert=False)
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-            qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(btns))
+            
+            # به‌روزرسانی منو با استفاده از تابع start
+            start(update, context)
         elif data.startswith("delAdmin"):
             # فقط ادمین پیش‌فرض می‌تواند ادمین حذف کند
             admin_int = int(Datas.admin) if Datas.admin is not None else None
@@ -868,29 +970,33 @@ def qrycall(update: Update, context: CallbackContext):
                 qry.answer()  # پاسخ به callback
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-            txt = "🗣 لیست لاگین های شما : "
+            
+            txt = "📱 <b>مدیریت لاگین‌های دیوار</b>\n\n"
             logins = curd.getLogins(chatid=chatid)
-            keyAdd = [InlineKeyboardButton('➕ اضافه کردن لاگین جدید ', callback_data='addlogin')]
+            
+            key = []
             if logins == 0:
-                txt += "شما هیچ شماره ای تا به حال اضافه نکرده اید !"
-                context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup([keyAdd]))
+                txt += "⚠️ شما هیچ شماره‌ای تا به حال اضافه نکرده‌اید!"
+                key.append([InlineKeyboardButton('➕ اضافه کردن لاگین جدید', callback_data='addlogin')])
             else:
-                key = []
+                txt += "📋 <b>لیست لاگین‌های شما:</b>\n\n"
                 for l in logins:
                     phoneL = l[0]
                     print(phoneL)
                     if l[2] == 0:
-                        status = ["❌", 1]
+                        status = ["❌ غیرفعال", 1]
                     else:
-                        status = ["✅", 0]
+                        status = ["✅ فعال", 0]
                     keyL = [
                         InlineKeyboardButton(status[0], callback_data=f"status:{str(status[1])}:{str(phoneL)}"),
-                        InlineKeyboardButton(str(phoneL), callback_data=f"del:{str(phoneL)}"),
-                        InlineKeyboardButton("🔄", callback_data=f"update:{str(phoneL)}"),
+                        InlineKeyboardButton(f"📱 {str(phoneL)}", callback_data=f"del:{str(phoneL)}"),
+                        InlineKeyboardButton("🔄 به‌روزرسانی", callback_data=f"update:{str(phoneL)}"),
                     ]
                     key.append(keyL)
-                key.append(keyAdd)
-                context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key))
+                key.append([InlineKeyboardButton('➕ اضافه کردن لاگین جدید', callback_data='addlogin')])
+            
+            key.append([InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')])
+            context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key), parse_mode='HTML')
         elif data == "addlogin":
             try:
                 qry.answer()  # پاسخ به callback
