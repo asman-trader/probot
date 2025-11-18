@@ -378,7 +378,7 @@ class nardeban:
         # دریافت توکن‌های pending از JSON
         from tokens_manager import get_tokens_from_json
         
-        tokens = get_tokens_from_json(chatid=chatid, phone=int(number))
+        tokens = get_tokens_from_json(chatid=chatid, phone=int(number), status="pending")
         
         if not tokens:
             # هیچ توکن pending وجود ندارد

@@ -651,12 +651,9 @@ class curdCommands:
             return 0
 
     def getStats(self, chatid):
-        """دریافت آمار اگهی‌ها برای یک chatid (با جزئیات هر لاگین) - استفاده از JSON"""
+        """دریافت آمار اگهی‌ها برای یک chatid (با جزئیات هر لاگین) - استفاده از JSON با ساختار جدید"""
         try:
-            from tokens_manager import get_tokens_from_json, load_tokens_json
-            
-            conn = self._get_connection()
-            cur = conn.cursor()
+            from tokens_manager import get_token_stats, load_tokens_json
             
             # دریافت شماره‌های مربوط به این chatid
             phone_numbers = self.get_phone_numbers_by_chatid(chatid=chatid)
@@ -666,48 +663,40 @@ class curdCommands:
             total_nardeban = 0
             total_tokens_all = 0
             total_pending = 0
+            total_failed = 0
             
             # دریافت توکن‌ها از JSON
             tokens_data = load_tokens_json()
             json_tokens_by_phone = tokens_data.get(chatid, {})
             
             for phone in phone_numbers:
-                # تعداد توکن‌های این شماره از JSON
-                tokens_from_json = json_tokens_by_phone.get(phone, [])
-                token_count = len(tokens_from_json)
+                # دریافت آمار برای این phone از JSON
+                phone_stats = get_token_stats(chatid=chatid, phone=phone)
                 
-                # تعداد نردبان شده برای این شماره (از sents)
-                nardeban_for_phone = 0
-                if tokens_from_json:
-                    # ساخت لیست توکن‌ها برای query
-                    placeholders = ','.join(['?' for _ in tokens_from_json])
-                    cur.execute(f"SELECT COUNT(*) FROM sents WHERE chatid = ? AND status = ? AND token IN ({placeholders})", 
-                               (chatid, "success") + tuple(tokens_from_json))
-                    result = cur.fetchone()
-                    nardeban_for_phone = result[0] if result else 0
-                
-                # تعداد pending = تعداد توکن‌های JSON که نردبان نشده‌اند
-                pending_for_phone = token_count - nardeban_for_phone
+                pending_count = phone_stats.get("pending", 0)
+                success_count = phone_stats.get("success", 0)
+                failed_count = phone_stats.get("failed", 0)
+                total_count = phone_stats.get("total", 0)
                 
                 login_stats.append({
                     'phone': phone,
-                    'nardeban_count': nardeban_for_phone,
-                    'total_tokens': token_count,
-                    'pending_count': max(0, pending_for_phone)
+                    'nardeban_count': success_count,
+                    'total_tokens': total_count,
+                    'pending_count': pending_count,
+                    'failed_count': failed_count
                 })
                 
-                total_nardeban += nardeban_for_phone
-                total_tokens_all += token_count
-                total_pending += max(0, pending_for_phone)
-            
-            cur.close()
-            conn.close()
+                total_nardeban += success_count
+                total_tokens_all += total_count
+                total_pending += pending_count
+                total_failed += failed_count
             
             return {
                 'login_stats': login_stats,
                 'total_nardeban': total_nardeban,
                 'total_tokens': total_tokens_all,
-                'total_pending': total_pending
+                'total_pending': total_pending,
+                'total_failed': total_failed
             }
         except Exception as e:
             print(f"Error getting stats: {e}")
@@ -717,7 +706,8 @@ class curdCommands:
                 'login_stats': [],
                 'total_nardeban': 0,
                 'total_tokens': 0,
-                'total_pending': 0
+                'total_pending': 0,
+                'total_failed': 0
             }
 
 

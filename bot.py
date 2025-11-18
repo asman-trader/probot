@@ -41,7 +41,9 @@ from tokens_manager import (
     get_tokens_from_json,
     get_all_pending_tokens_from_json,
     has_pending_tokens_in_json,
-    load_tokens_json
+    load_tokens_json,
+    update_token_status,
+    get_token_stats
 )
 
 # ایجاد فایل JSON در صورت عدم وجود
@@ -1261,7 +1263,7 @@ def sendNardeban(chatid):
                 l = available_logins[index]
                 
                 # دریافت اولین توکن pending برای این لاگین از JSON
-                tokens_from_json = get_tokens_from_json(chatid=chatid, phone=int(l[0]))
+                tokens_from_json = get_tokens_from_json(chatid=chatid, phone=int(l[0]), status="pending")
                 token = tokens_from_json[0] if tokens_from_json else None
                 if token:
                     selected_login = l
@@ -1365,16 +1367,16 @@ def sendNardeban(chatid):
 def handleNardebanResult(result, login_info, chatid, nardebanAPI):
     """تابع helper برای مدیریت نتیجه نردبان - برمی‌گرداند True اگر موفق بود"""
     if result[0] == 1:
-        # حذف توکن از JSON بعد از نردبان موفق
+        # به‌روزرسانی وضعیت توکن به success بعد از نردبان موفق
         token = result[1] if len(result) > 1 else None
         phone = result[2] if len(result) > 2 else login_info[0]
         
         if token:
-            removed = remove_token_from_json(chatid=chatid, phone=int(phone), token=token)
-            if removed:
-                print(f"✅ توکن {token} از JSON حذف شد (نردبان موفق)")
+            updated = update_token_status(chatid=chatid, phone=int(phone), token=token, new_status="success")
+            if updated:
+                print(f"✅ توکن {token} به وضعیت success تغییر یافت (نردبان موفق)")
             else:
-                print(f"⚠️ توکن {token} در JSON یافت نشد")
+                print(f"⚠️ توکن {token} در JSON یافت نشد یا به‌روزرسانی نشد")
         
         # به‌روزرسانی تعداد نردبان‌های استفاده‌شده برای لاگین فعلی
         curd.updateLimitLogin(phone=login_info[0])
@@ -1393,9 +1395,16 @@ def handleNardebanResult(result, login_info, chatid, nardebanAPI):
             print(f"Error sending message: {e}")
         return True
     elif result[0] == 0:
-        # اگر نردبان موفق نبود
-        error_token = result[1] if len(result) > 1 else "unknown"
+        # اگر نردبان موفق نبود - به‌روزرسانی وضعیت به failed
+        error_token = result[1] if len(result) > 1 else None
         error_msg = result[2] if len(result) > 2 else "خطای نامشخص"
+        phone = login_info[0]
+        
+        if error_token:
+            updated = update_token_status(chatid=chatid, phone=int(phone), token=error_token, new_status="failed")
+            if updated:
+                print(f"⚠️ توکن {error_token} به وضعیت failed تغییر یافت")
+        
         print(f"Failed to nardeban ad with token {error_token}: {error_msg}")
         updater.bot.send_message(chat_id=chatid,
                          text=f"نردبان آگهی با توکن {str(error_token)} با مشکل مواجه شد.\nخطا: {str(error_msg)}")

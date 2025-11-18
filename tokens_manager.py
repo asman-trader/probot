@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ماژول مدیریت توکن‌ها در فایل JSON
+ساختار جدید: هر توکن با وضعیت (pending, success, failed) ذخیره می‌شود
 """
 
 import json
@@ -22,12 +23,46 @@ def _create_empty_json_file():
         traceback.print_exc()
         return False
 
+def _migrate_old_format_to_new(data):
+    """تبدیل ساختار قدیمی به ساختار جدید"""
+    try:
+        migrated = {}
+        for chatid_str, phones in data.items():
+            chatid_int = int(chatid_str)
+            migrated[chatid_int] = {}
+            
+            for phone_str, tokens in phones.items():
+                phone_int = int(phone_str)
+                
+                # اگر tokens یک لیست ساده است (ساختار قدیمی)
+                if isinstance(tokens, list):
+                    # همه توکن‌های قدیمی را به pending تبدیل می‌کنیم
+                    migrated[chatid_int][phone_int] = {
+                        "pending": tokens,
+                        "success": [],
+                        "failed": []
+                    }
+                # اگر tokens یک دیکشنری است (ساختار جدید)
+                elif isinstance(tokens, dict):
+                    # اطمینان از وجود همه کلیدها
+                    migrated[chatid_int][phone_int] = {
+                        "pending": tokens.get("pending", []),
+                        "success": tokens.get("success", []),
+                        "failed": tokens.get("failed", [])
+                    }
+        
+        return migrated
+    except Exception as e:
+        print(f"⚠️ خطا در تبدیل ساختار قدیمی: {e}")
+        return data
+
 def load_tokens_json():
     """بارگذاری توکن‌ها از فایل JSON"""
     try:
         if os.path.exists(TOKENS_JSON_FILE):
             with open(TOKENS_JSON_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+                
                 # تبدیل کلیدهای string به int برای سازگاری
                 result = {}
                 for chatid_str, phones in data.items():
@@ -36,6 +71,9 @@ def load_tokens_json():
                     for phone_str, tokens in phones.items():
                         phone_int = int(phone_str)
                         result[chatid_int][phone_int] = tokens
+                
+                # تبدیل ساختار قدیمی به جدید (اگر لازم باشد)
+                result = _migrate_old_format_to_new(result)
                 return result
         else:
             # اگر فایل وجود ندارد، یک فایل خالی ایجاد کن
@@ -57,8 +95,8 @@ def save_tokens_json(tokens_data):
         data = {}
         for chatid, phones in tokens_data.items():
             data[str(chatid)] = {}
-            for phone, tokens in phones.items():
-                data[str(chatid)][str(phone)] = tokens
+            for phone, status_dict in phones.items():
+                data[str(chatid)][str(phone)] = status_dict
         
         # اگر data خالی است، یک ساختار خالی ایجاد کن
         if not data:
@@ -84,7 +122,7 @@ def save_tokens_json(tokens_data):
             pass
 
 def add_tokens_to_json(chatid, phone, tokens):
-    """اضافه کردن توکن‌ها به JSON"""
+    """اضافه کردن توکن‌ها به JSON با وضعیت pending"""
     try:
         print(f"📝 [add_tokens_to_json] شروع: chatid={chatid}, phone={phone}, تعداد توکن‌ها={len(tokens)}")
         
@@ -96,13 +134,21 @@ def add_tokens_to_json(chatid, phone, tokens):
             print(f"📝 [add_tokens_to_json] chatid جدید اضافه شد: {chatid}")
         
         if phone not in tokens_data[chatid]:
-            tokens_data[chatid][phone] = []
+            tokens_data[chatid][phone] = {
+                "pending": [],
+                "success": [],
+                "failed": []
+            }
             print(f"📝 [add_tokens_to_json] phone جدید اضافه شد: {phone}")
         
-        # اضافه کردن فقط توکن‌های جدید (غیر تکراری)
-        existing = set(tokens_data[chatid][phone])
-        new_tokens = [t for t in tokens if t not in existing]
-        tokens_data[chatid][phone].extend(new_tokens)
+        # دریافت تمام توکن‌های موجود (از همه وضعیت‌ها)
+        all_existing = set(tokens_data[chatid][phone]["pending"] + 
+                          tokens_data[chatid][phone]["success"] + 
+                          tokens_data[chatid][phone]["failed"])
+        
+        # اضافه کردن فقط توکن‌های جدید (غیر تکراری) به pending
+        new_tokens = [t for t in tokens if t not in all_existing]
+        tokens_data[chatid][phone]["pending"].extend(new_tokens)
         
         print(f"📝 [add_tokens_to_json] {len(new_tokens)} توکن جدید اضافه شد (از {len(tokens)} توکن)")
         
@@ -116,55 +162,155 @@ def add_tokens_to_json(chatid, phone, tokens):
         traceback.print_exc()
         return 0
 
-def remove_token_from_json(chatid, phone, token):
-    """حذف یک توکن از JSON بعد از نردبان موفق - اگر فایل وجود نداشت، ایجاد می‌شود"""
+def update_token_status(chatid, phone, token, new_status):
+    """به‌روزرسانی وضعیت یک توکن (pending -> success/failed)"""
     try:
-        tokens_data = load_tokens_json()  # این تابع خودش فایل را ایجاد می‌کند اگر وجود نداشته باشد
+        tokens_data = load_tokens_json()
         
-        if chatid in tokens_data and phone in tokens_data[chatid]:
-            if token in tokens_data[chatid][phone]:
-                tokens_data[chatid][phone].remove(token)
-                # اگر لیست توکن‌ها خالی شد، آن را حذف کن
-                if not tokens_data[chatid][phone]:
-                    del tokens_data[chatid][phone]
-                # اگر لیست شماره‌ها خالی شد، آن را حذف کن
-                if not tokens_data[chatid]:
-                    del tokens_data[chatid]
-                
-                save_tokens_json(tokens_data)
-                return True
-        return False
+        if chatid not in tokens_data or phone not in tokens_data[chatid]:
+            print(f"⚠️ توکن {token} یافت نشد برای به‌روزرسانی")
+            return False
+        
+        status_dict = tokens_data[chatid][phone]
+        
+        # حذف توکن از وضعیت قبلی
+        removed = False
+        for status in ["pending", "success", "failed"]:
+            if token in status_dict[status]:
+                status_dict[status].remove(token)
+                removed = True
+                break
+        
+        if not removed:
+            print(f"⚠️ توکن {token} در هیچ وضعیتی یافت نشد")
+            return False
+        
+        # اضافه کردن توکن به وضعیت جدید
+        if new_status in ["pending", "success", "failed"]:
+            status_dict[new_status].append(token)
+            save_tokens_json(tokens_data)
+            print(f"✅ توکن {token} به وضعیت {new_status} تغییر یافت")
+            return True
+        else:
+            print(f"❌ وضعیت نامعتبر: {new_status}")
+            return False
+            
     except Exception as e:
-        print(f"❌ خطا در حذف توکن از JSON: {e}")
+        print(f"❌ خطا در به‌روزرسانی وضعیت توکن: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
-def get_tokens_from_json(chatid, phone):
-    """دریافت توکن‌ها از JSON - اگر فایل وجود نداشت، ایجاد می‌شود"""
-    tokens_data = load_tokens_json()  # این تابع خودش فایل را ایجاد می‌کند اگر وجود نداشته باشد
+def remove_token_from_json(chatid, phone, token):
+    """حذف یک توکن از JSON - DEPRECATED: استفاده از update_token_status به جای این"""
+    # برای سازگاری با کد قدیمی، این تابع وضعیت را به success تغییر می‌دهد
+    return update_token_status(chatid, phone, token, "success")
+
+def get_tokens_from_json(chatid, phone, status="pending"):
+    """دریافت توکن‌ها از JSON با وضعیت مشخص - اگر فایل وجود نداشت، ایجاد می‌شود"""
+    tokens_data = load_tokens_json()
     if chatid in tokens_data and phone in tokens_data[chatid]:
-        return tokens_data[chatid][phone]
+        status_dict = tokens_data[chatid][phone]
+        if isinstance(status_dict, dict) and status in status_dict:
+            return status_dict[status]
+        # سازگاری با ساختار قدیمی
+        elif isinstance(status_dict, list):
+            return status_dict if status == "pending" else []
     return []
 
 def get_all_pending_tokens_from_json(chatid):
     """دریافت تمام توکن‌های pending از JSON - اگر فایل وجود نداشت، ایجاد می‌شود"""
-    tokens_data = load_tokens_json()  # این تابع خودش فایل را ایجاد می‌کند اگر وجود نداشته باشد
+    tokens_data = load_tokens_json()
     if chatid not in tokens_data:
         return []
     
     all_pending = []
-    for phone, tokens in tokens_data[chatid].items():
-        for token in tokens:
+    for phone, status_dict in tokens_data[chatid].items():
+        if isinstance(status_dict, dict):
+            pending_tokens = status_dict.get("pending", [])
+        else:
+            # سازگاری با ساختار قدیمی
+            pending_tokens = status_dict if isinstance(status_dict, list) else []
+        
+        for token in pending_tokens:
             all_pending.append((phone, token))
     return all_pending
 
+def get_all_tokens_by_status(chatid, status="pending"):
+    """دریافت تمام توکن‌ها با وضعیت مشخص از JSON"""
+    tokens_data = load_tokens_json()
+    if chatid not in tokens_data:
+        return []
+    
+    all_tokens = []
+    for phone, status_dict in tokens_data[chatid].items():
+        if isinstance(status_dict, dict):
+            tokens = status_dict.get(status, [])
+        else:
+            # سازگاری با ساختار قدیمی
+            tokens = status_dict if isinstance(status_dict, list) and status == "pending" else []
+        
+        for token in tokens:
+            all_tokens.append((phone, token))
+    return all_tokens
+
 def has_pending_tokens_in_json(chatid):
     """بررسی اینکه آیا توکن pending در JSON وجود دارد - اگر فایل وجود نداشت، ایجاد می‌شود"""
-    tokens_data = load_tokens_json()  # این تابع خودش فایل را ایجاد می‌کند اگر وجود نداشته باشد
+    tokens_data = load_tokens_json()
     if chatid not in tokens_data:
         return False
     
-    for phone, tokens in tokens_data[chatid].items():
-        if tokens:
-            return True
+    for phone, status_dict in tokens_data[chatid].items():
+        if isinstance(status_dict, dict):
+            if status_dict.get("pending", []):
+                return True
+        else:
+            # سازگاری با ساختار قدیمی
+            if isinstance(status_dict, list) and status_dict:
+                return True
     return False
 
+def get_token_stats(chatid, phone=None):
+    """دریافت آمار توکن‌ها برای یک chatid یا phone خاص"""
+    tokens_data = load_tokens_json()
+    if chatid not in tokens_data:
+        return {
+            "pending": 0,
+            "success": 0,
+            "failed": 0,
+            "total": 0
+        }
+    
+    stats = {
+        "pending": 0,
+        "success": 0,
+        "failed": 0,
+        "total": 0
+    }
+    
+    if phone:
+        # آمار برای یک phone خاص
+        if phone in tokens_data[chatid]:
+            status_dict = tokens_data[chatid][phone]
+            if isinstance(status_dict, dict):
+                stats["pending"] = len(status_dict.get("pending", []))
+                stats["success"] = len(status_dict.get("success", []))
+                stats["failed"] = len(status_dict.get("failed", []))
+            else:
+                # سازگاری با ساختار قدیمی
+                stats["pending"] = len(status_dict) if isinstance(status_dict, list) else 0
+            stats["total"] = stats["pending"] + stats["success"] + stats["failed"]
+    else:
+        # آمار برای تمام phone ها
+        for phone_key, status_dict in tokens_data[chatid].items():
+            if isinstance(status_dict, dict):
+                stats["pending"] += len(status_dict.get("pending", []))
+                stats["success"] += len(status_dict.get("success", []))
+                stats["failed"] += len(status_dict.get("failed", []))
+            else:
+                # سازگاری با ساختار قدیمی
+                stats["pending"] += len(status_dict) if isinstance(status_dict, list) else 0
+        
+        stats["total"] = stats["pending"] + stats["success"] + stats["failed"]
+    
+    return stats
