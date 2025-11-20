@@ -466,19 +466,70 @@ class curdCommands:
             print(f"Error getting limit login: {e}")
             return 0
 
-    def activeLogin(self, phone, status):
+    def activeLogin(self, phone, status, chatid=None):
+        """
+        فعال یا غیرفعال کردن یک لاگین.
+        خروجی: (موفقیت, پیام)
+        """
+        conn = None
+        cur = None
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "UPDATE logins SET active = ? WHERE phone = ?"
-            cur.execute(insrt, (status, phone))
+
+            # نرمال‌سازی ورودی شماره
+            phone_candidates = []
+            if phone is not None:
+                phone_str = str(phone).strip()
+                if phone_str:
+                    phone_candidates.append(phone_str)
+                    digits_only = "".join(ch for ch in phone_str if ch.isdigit())
+                    if digits_only and digits_only not in phone_candidates:
+                        phone_candidates.append(digits_only)
+                    try:
+                        phone_int = int(digits_only or phone_str)
+                        if phone_int not in phone_candidates:
+                            phone_candidates.append(phone_int)
+                    except Exception:
+                        pass
+
+            if not phone_candidates:
+                phone_candidates = [phone]
+
+            updated = 0
+            matched_value = None
+            status_val = 1 if int(status) == 1 else 0
+
+            for value in phone_candidates:
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    continue
+                query = "UPDATE logins SET active = ? WHERE phone = ?"
+                params = [status_val, value]
+                if chatid is not None:
+                    query += " AND chatid = ?"
+                    params.append(int(chatid))
+                cur.execute(query, tuple(params))
+                if cur.rowcount > 0:
+                    updated = cur.rowcount
+                    matched_value = value
+                    break
+
             conn.commit()
-            cur.close()
-            conn.close()
-            return "Done"
+
+            if updated > 0:
+                state_txt = "فعال" if status_val == 1 else "غیرفعال"
+                display_phone = matched_value if matched_value is not None else phone
+                return True, f"شماره {display_phone} {state_txt} شد."
+            else:
+                return False, "شماره‌ای با این مشخصات در لیست شما یافت نشد."
         except Exception as e:
             print(f"Error activating login: {e}")
-            return "Error"
+            return False, "خطا در به‌روزرسانی وضعیت شماره."
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
 
     def addSent(self, chatid, token, status):
         """افزودن توکن نردبان شده به دیتابیس - برمی‌گرداند 1 اگر جدید بود، 0 اگر قبلاً وجود داشت"""

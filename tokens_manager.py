@@ -362,3 +362,20 @@ def get_token_stats(chatid, phone=None):
         stats["total"] = stats["pending"] + stats["success"] + stats["failed"]
     
     return stats
+
+def reset_tokens_for_chat(chatid):
+    """حذف کامل تمام توکن‌های مربوط به یک chatid از فایل JSON"""
+    try:
+        tokens_data = load_tokens_json()
+        if chatid in tokens_data:
+            del tokens_data[chatid]
+            save_tokens_json(tokens_data)
+            print(f"♻️ تمام توکن‌های chatid={chatid} از JSON حذف شد.")
+            return True
+        print(f"ℹ️ توکنی برای chatid={chatid} در JSON یافت نشد.")
+        return False
+    except Exception as e:
+        print(f"❌ خطا در reset_tokens_for_chat برای chatid={chatid}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False

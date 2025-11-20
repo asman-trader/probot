@@ -32,6 +32,7 @@ from telegram.ext import (
     filters,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 # Local imports
 from loadConfig import configBot
@@ -47,7 +48,8 @@ from tokens_manager import (
     has_pending_tokens_in_json,
     load_tokens_json,
     update_token_status,
-    get_token_stats
+    get_token_stats,
+    reset_tokens_for_chat
 )
 
 # ایجاد فایل JSON در صورت عدم وجود
@@ -319,9 +321,27 @@ def format_admin_menu(chat_id):
     type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
     type_name = type_names.get(nardeban_type, "ترتیبی کامل")
 
-    # وضعیت job
-    has_job = curd.getJob(chatid=chat_id) is not None
+    # وضعیت job و فاصله نردبان
+    job_id = curd.getJob(chatid=chat_id)
+    has_job = job_id is not None
     job_status = "🔄 در حال اجرا" if has_job else "⏸️ متوقف"
+
+    interval_text = "در انتظار شروع"
+    if nardeban_type == 4:
+        interval_text = "نامنظم (۳ تا ۱۵ دقیقه)"
+    elif has_job:
+        job = scheduler.get_job(job_id) if scheduler else None
+        if job and isinstance(job.trigger, IntervalTrigger):
+            seconds = job.trigger.interval.total_seconds()
+            if seconds >= 60:
+                minutes = max(1, round(seconds / 60))
+                interval_text = f"هر {minutes} دقیقه"
+            else:
+                interval_text = f"هر {int(seconds)} ثانیه"
+        elif job:
+            interval_text = "ثبت شده (Trigger نامشخص)"
+        else:
+            interval_text = "job در scheduler یافت نشد"
 
     welcome_text = f"""🤖 <b>منوی مدیریت ربات نردبان</b>
 
@@ -336,6 +356,7 @@ def format_admin_menu(chat_id):
    🔽 سقف نردبان: <b>{mngDetail[1]}</b>
    🎯 نوع نردبان: <b>{type_name}</b>
    {job_status}
+   ⏱️ فاصله نردبان: <b>{interval_text}</b>
 
 👇 <i>یکی از گزینه‌های زیر را انتخاب کنید:</i>"""
 
@@ -356,6 +377,7 @@ def format_admin_menu(chat_id):
             InlineKeyboardButton('🔄 استخراج مجدد', callback_data='reExtract'),
             InlineKeyboardButton('⏹️ توقف نردبان', callback_data='remJob')
         ],
+        [InlineKeyboardButton('♻️ ریست استخراج‌ها', callback_data='resetTokens')],
     ]
 
     if int(chat_id) == int(Datas.admin):
@@ -365,6 +387,34 @@ def format_admin_menu(chat_id):
     btns.append([InlineKeyboardButton('🔁 بروزرسانی منو', callback_data='refreshMenu')])
 
     return welcome_text, InlineKeyboardMarkup(btns)
+
+
+def format_login_management_menu(chat_id):
+    """
+    ساخت متن و دکمه‌های مدیریت لاگین‌ها برای یک کاربر خاص.
+    """
+    logins = curd.getLogins(chatid=chat_id)
+    text = "📱 <b>مدیریت لاگین‌های دیوار</b>\n\n"
+    buttons = []
+
+    if not logins or logins == 0:
+        text += "⚠️ شما هیچ شماره‌ای تا به حال اضافه نکرده‌اید!"
+        buttons.append([InlineKeyboardButton('➕ اضافه کردن لاگین جدید', callback_data='addlogin')])
+    else:
+        text += "📋 <b>لیست لاگین‌های شما:</b>\n\n"
+        for phone, _, active in logins:
+            phone_str = str(phone)
+            status_text = "✅ فعال" if active else "❌ غیرفعال"
+            next_state = 0 if active else 1
+            buttons.append([
+                InlineKeyboardButton(status_text, callback_data=f"status:{next_state}:{phone_str}"),
+                InlineKeyboardButton(f"📱 {phone_str}", callback_data=f"del:{phone_str}"),
+                InlineKeyboardButton("🔄 به‌روزرسانی", callback_data=f"update:{phone_str}"),
+            ])
+        buttons.append([InlineKeyboardButton('➕ اضافه کردن لاگین جدید', callback_data='addlogin')])
+
+    buttons.append([InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')])
+    return text, InlineKeyboardMarkup(buttons)
 
 
 async def send_admin_menu(chat_id, message_id=None):
@@ -818,6 +868,10 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال
             await qry.answer(text="در حال استخراج مجدد اگهی‌ها...", show_alert=False)
             await reExtractTokens(chatid=chatid)
+        elif data == "resetTokens":
+            await qry.answer(text="ریست همه استخراج‌ها...", show_alert=False)
+            await resetAllExtractions(chatid=chatid)
+            await send_admin_menu(chat_id=chatid, message_id=qry.message.message_id)
         elif data == "setNardebanType":
             # نمایش منوی انتخاب نوع نردبان
             mngDetail = curd.getManage(chatid=chatid)
@@ -1059,39 +1113,15 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
             
-            txt = "📱 <b>مدیریت لاگین‌های دیوار</b>\n\n"
-            logins = curd.getLogins(chatid=chatid)
-            
-            key = []
-            if logins == 0:
-                txt += "⚠️ شما هیچ شماره‌ای تا به حال اضافه نکرده‌اید!"
-                key.append([InlineKeyboardButton('➕ اضافه کردن لاگین جدید', callback_data='addlogin')])
-            else:
-                txt += "📋 <b>لیست لاگین‌های شما:</b>\n\n"
-                for l in logins:
-                    phoneL = l[0]
-                    print(phoneL)
-                    if l[2] == 0:
-                        status = ["❌ غیرفعال", 1]
-                    else:
-                        status = ["✅ فعال", 0]
-                    keyL = [
-                        InlineKeyboardButton(status[0], callback_data=f"status:{str(status[1])}:{str(phoneL)}"),
-                        InlineKeyboardButton(f"📱 {str(phoneL)}", callback_data=f"del:{str(phoneL)}"),
-                        InlineKeyboardButton("🔄 به‌روزرسانی", callback_data=f"update:{str(phoneL)}"),
-                    ]
-                    key.append(keyL)
-                key.append([InlineKeyboardButton('➕ اضافه کردن لاگین جدید', callback_data='addlogin')])
-            
-            key.append([InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')])
+            txt, keyboard = format_login_management_menu(chat_id=chatid)
             try:
-                await context.bot.send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key), parse_mode='HTML')
+                await context.bot.send_message(chat_id=chatid, text=txt, reply_markup=keyboard, parse_mode='HTML')
             except Exception as e:
                 print(f"❌ خطا در ارسال منوی مدیریت لاگین: {e}")
                 import traceback
                 traceback.print_exc()
                 # سعی کن با bot_send_message ارسال کن
-                await bot_send_message(chat_id=chatid, text=txt, reply_markup=InlineKeyboardMarkup(key), parse_mode='HTML')
+                await bot_send_message(chat_id=chatid, text=txt, reply_markup=keyboard, parse_mode='HTML')
         elif data == "addlogin":
             try:
                 await qry.answer()  # پاسخ به callback
@@ -1121,31 +1151,30 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await qry.answer(text="شما هیج نردبان فعالی ندارید !", show_alert=True)
         elif data.startswith("status"):
             details = data.split(":")
-            result = curd.activeLogin(phone=details[2], status=int(details[1]))
-            
-            # ساخت keyboard جدید به جای تغییر دادن keyboard موجود
-            old_keyboard = qry.message.reply_markup.inline_keyboard
-            new_keyboard = []
-            for row in old_keyboard:
-                new_row = []
-                for button in row:
-                    button_text = button.text
-                    button_callback = str(button.callback_data)
-                    
-                    # تغییر دکمه status مربوط به این شماره
-                    if button_callback.split(":")[0] == "status" and button_callback.split(":")[2] == details[2]:
-                        if "❌" in button_text:
-                            button_text = button_text.replace("❌", "✅")
-                            button_callback = f"status:0:{details[2]}"
-                        elif "✅" in button_text:
-                            button_text = button_text.replace("✅", "❌")
-                            button_callback = f"status:1:{details[2]}"
-                    
-                    new_row.append(InlineKeyboardButton(button_text, callback_data=button_callback))
-                new_keyboard.append(new_row)
-            
-            await qry.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
-            await qry.answer(text=result)
+            success, message = curd.activeLogin(phone=details[2], status=int(details[1]), chatid=chatid)
+
+            txt, keyboard = format_login_management_menu(chat_id=chatid)
+            bot = get_bot()
+            if bot:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=chatid,
+                        message_id=qry.message.message_id,
+                        text=txt,
+                        reply_markup=keyboard,
+                        parse_mode='HTML'
+                    )
+                except Exception as e:
+                    print(f"⚠️ [status] خطا در ویرایش پیام مدیریت لاگین: {e}")
+                    try:
+                        await bot.edit_message_reply_markup(
+                            chat_id=chatid,
+                            message_id=qry.message.message_id,
+                            reply_markup=keyboard
+                        )
+                    except Exception as inner_e:
+                        print(f"⚠️ [status] خطا در به‌روزرسانی keyboard: {inner_e}")
+            await qry.answer(text=message, show_alert=not success)
         else:
             # اگر هیچ callback match نکرد، فقط پاسخ بده (بدون پیام خطا)
             print(f"⚠️ [qrycall] هیچ handler برای data={data} پیدا نشد")
@@ -1354,6 +1383,20 @@ async def extractTokensIfNeeded(chatid, available_logins):
             await bot_send_message(chat_id=chatid, text="✅ استخراج اگهی‌ها به پایان رسید.")
     except Exception as e:
         print(f"Error in extractTokensIfNeeded: {e}")
+
+async def trigger_extract_if_done(chatid):
+    """اگر هیچ اگهی pending باقی نمانده باشد، بلافاصله استخراج مجدد را اجرا می‌کند"""
+    try:
+        if has_pending_tokens_in_json(chatid=chatid):
+            return
+
+        logins = curd.getCookies(chatid=chatid)
+        if not logins:
+            return
+
+        await extractTokensIfNeeded(chatid, logins)
+    except Exception as e:
+        print(f"Error in trigger_extract_if_done: {e}")
 
 async def sendNardeban(chatid):
     try:
@@ -1582,6 +1625,9 @@ async def handleNardebanResult(result, login_info, chatid, nardebanAPI):
                                  text=f"از شماره {str(result[2])} تا به حال تعداد {str(updated_login[2])} آگهی نردبان شده است.")
         except Exception as e:
             print(f"Error sending message: {e}")
+        
+        # اگر هیچ اگهی pending باقی نمانده باشد، بلافاصله استخراج جدید انجام بده
+        await trigger_extract_if_done(chatid)
         return True
     elif result[0] == 0:
         # اگر نردبان موفق نبود - به‌روزرسانی وضعیت به failed
@@ -1690,6 +1736,30 @@ async def reExtractTokens(chatid):
     except Exception as e:
         print(f"Error in reExtractTokens: {e}")
         await bot_send_message(chat_id=chatid, text=f"❌ خطا در فرآیند استخراج مجدد: {str(e)}")
+
+async def resetAllExtractions(chatid):
+    """حذف تمام اگهی‌های استخراج شده و صفر کردن شمارنده‌ها برای یک chatid"""
+    try:
+        phones = curd.get_phone_numbers_by_chatid(chatid=chatid) or []
+        json_reset = reset_tokens_for_chat(chatid)
+
+        deleted_from_db = 0
+        for phone in phones:
+            curd.delete_tokens_by_phone(phone=int(phone))
+            deleted_from_db += 1
+
+        curd.remSents(chatid)
+        curd.refreshUsed(chatid)
+
+        summary_lines = ["♻️ <b>ریست استخراج‌ها انجام شد.</b>"]
+        summary_lines.append("• JSON پاک‌سازی شد." if json_reset else "• در JSON داده‌ای برای پاک کردن نبود.")
+        summary_lines.append(f"• رکوردهای دیتابیس برای {deleted_from_db} لاگین حذف شد.")
+        summary_lines.append("• شمارنده استفاده لاگین‌ها صفر شد و لاگ‌های نردبان پاک شدند.")
+
+        await bot_send_message(chat_id=chatid, text="\n".join(summary_lines), parse_mode='HTML')
+    except Exception as e:
+        print(f"Error in resetAllExtractions: {e}")
+        await bot_send_message(chat_id=chatid, text=f"❌ خطا در ریست استخراج‌ها: {str(e)}")
 
 def refreshUsed(chatid):
     """بازنشانی وضعیت استفاده شده - بدون حذف اگهی‌های استخراج شده"""
