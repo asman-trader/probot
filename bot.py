@@ -2255,11 +2255,36 @@ async def sendNardeban(chatid):
         climit = manageDetails[2] if manageDetails[2] is not None else 0
         nardeban_type = manageDetails[3] if len(manageDetails) > 3 else 1  # نوع نردبان
         
-        # فیلتر کردن لاگین‌هایی که به سقف نرسیده‌اند
-        available_logins = [l for l in logins if l[2] <= int(climit)]
+        # فیلتر کردن لاگین‌هایی که:
+        # 1. به سقف نرسیده‌اند (l[2] < climit)، یا
+        # 2. اگهی pending دارند (حتی اگر به سقف رسیده باشند)
+        available_logins = []
+        for l in logins:
+            # بررسی اینکه آیا به سقف نرسیده است
+            under_limit = climit == 0 or l[2] < int(climit)
+            
+            # بررسی اینکه آیا اگهی pending دارد
+            has_pending = False
+            try:
+                pending_tokens = get_tokens_from_json(chatid=chatid, phone=int(l[0]), status="pending")
+                has_pending = len(pending_tokens) > 0
+            except:
+                pass
+            
+            # اگر به سقف نرسیده یا اگهی pending دارد، در دسترس است
+            if under_limit or has_pending:
+                available_logins.append(l)
         
         if not available_logins:
-            await bot_send_message(chat_id=chatid, text="تمام لاگین‌ها به سقف نردبان رسیده‌اند.")
+            # بررسی دقیق‌تر: آیا واقعاً همه لاگین‌ها به سقف رسیده‌اند و اگهی pending ندارند؟
+            all_at_limit = all(l[2] >= int(climit) for l in logins) if climit > 0 else False
+            has_any_pending = has_pending_tokens_in_json(chatid=chatid)
+            
+            if all_at_limit and not has_any_pending:
+                await bot_send_message(chat_id=chatid, text="تمام لاگین‌ها به سقف نردبان رسیده‌اند و هیچ اگهی pending وجود ندارد.")
+            else:
+                # این حالت نباید اتفاق بیفتد، اما برای اطمینان
+                await bot_send_message(chat_id=chatid, text="⚠️ هیچ لاگین در دسترسی یافت نشد. لطفاً بررسی کنید.")
             return
         
         # بررسی و استخراج توکن‌ها فقط در صورتی که همه اگهی‌ها نردبان شده باشند
