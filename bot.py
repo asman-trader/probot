@@ -39,6 +39,239 @@ from loadConfig import configBot
 from curds import curdCommands, CreateDB
 from dapi import api, nardeban
 
+# توابع مدیریت ساعت و دقیقه توقف و شروع در configs.json
+def get_stop_time_from_config():
+    """خواندن ساعت و دقیقه توقف خودکار از configs.json - برمی‌گرداند (hour, minute) یا None"""
+    try:
+        with open('configs.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            # پشتیبانی از فرمت قدیمی (فقط hour)
+            if 'stop_hour' in config and 'stop_minute' not in config:
+                return (config.get('stop_hour'), 0)
+            # فرمت جدید (hour و minute)
+            stop_hour = config.get('stop_hour')
+            stop_minute = config.get('stop_minute', 0)
+            if stop_hour is not None:
+                return (stop_hour, stop_minute)
+            return None
+    except Exception as e:
+        print(f"❌ خطا در خواندن stop_time از configs.json: {e}")
+        return None
+
+def set_stop_time_in_config(hour, minute=0):
+    """ذخیره ساعت و دقیقه توقف خودکار در configs.json"""
+    try:
+        with open('configs.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        config['stop_hour'] = hour
+        config['stop_minute'] = minute
+        with open('configs.json', 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        print(f"✅ ساعت توقف خودکار ({hour:02d}:{minute:02d}) در configs.json ذخیره شد.")
+        return True
+    except Exception as e:
+        print(f"❌ خطا در ذخیره stop_time در configs.json: {e}")
+        return False
+
+def get_start_time_from_config():
+    """خواندن ساعت و دقیقه شروع خودکار از configs.json - برمی‌گرداند (hour, minute) یا None"""
+    try:
+        with open('configs.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            # پشتیبانی از فرمت قدیمی (فقط hour)
+            if 'start_hour' in config and 'start_minute' not in config:
+                return (config.get('start_hour'), 0)
+            # فرمت جدید (hour و minute)
+            start_hour = config.get('start_hour')
+            start_minute = config.get('start_minute', 0)
+            if start_hour is not None:
+                return (start_hour, start_minute)
+            return None
+    except Exception as e:
+        print(f"❌ خطا در خواندن start_time از configs.json: {e}")
+        return None
+
+def set_start_time_in_config(hour, minute=0):
+    """ذخیره ساعت و دقیقه شروع خودکار در configs.json"""
+    try:
+        with open('configs.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        config['start_hour'] = hour
+        config['start_minute'] = minute
+        with open('configs.json', 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        print(f"✅ ساعت شروع خودکار ({hour:02d}:{minute:02d}) در configs.json ذخیره شد.")
+        return True
+    except Exception as e:
+        print(f"❌ خطا در ذخیره start_time در configs.json: {e}")
+        return False
+
+# توابع سازگاری با کد قدیمی
+def get_stop_hour_from_config():
+    """خواندن فقط ساعت توقف (برای سازگاری)"""
+    result = get_stop_time_from_config()
+    return result[0] if result else None
+
+def set_stop_hour_in_config(hour):
+    """ذخیره فقط ساعت توقف (برای سازگاری)"""
+    return set_stop_time_in_config(hour, 0)
+
+def get_start_hour_from_config():
+    """خواندن فقط ساعت شروع (برای سازگاری)"""
+    result = get_start_time_from_config()
+    return result[0] if result else None
+
+def set_start_hour_in_config(hour):
+    """ذخیره فقط ساعت شروع (برای سازگاری)"""
+    return set_start_time_in_config(hour, 0)
+
+def get_repeat_days_from_config():
+    """خواندن تعداد روزهای تکرار از configs.json"""
+    try:
+        with open('configs.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            return config.get('repeat_days', 365)  # پیش‌فرض 365 روز
+    except Exception as e:
+        print(f"❌ خطا در خواندن repeat_days از configs.json: {e}")
+        return 365
+
+def set_repeat_days_in_config(days, reset_start_date=False):
+    """ذخیره تعداد روزهای تکرار در configs.json
+    
+    Args:
+        days: تعداد روزهای تکرار
+        reset_start_date: اگر True باشد، تاریخ شروع را به امروز تنظیم می‌کند
+    """
+    try:
+        with open('configs.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        config['repeat_days'] = days
+        # ذخیره یا به‌روزرسانی تاریخ شروع تکرار
+        if reset_start_date or 'repeat_start_date' not in config:
+            config['repeat_start_date'] = datetime.now().strftime('%Y-%m-%d')
+        with open('configs.json', 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        print(f"✅ تعداد روزهای تکرار ({days}) در configs.json ذخیره شد.")
+        return True
+    except Exception as e:
+        print(f"❌ خطا در ذخیره repeat_days در configs.json: {e}")
+        return False
+
+def get_repeat_start_date_from_config():
+    """خواندن تاریخ شروع تکرار از configs.json"""
+    try:
+        with open('configs.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            date_str = config.get('repeat_start_date')
+            if date_str:
+                return datetime.strptime(date_str, '%Y-%m-%d').date()
+            return datetime.now().date()
+    except Exception as e:
+        print(f"❌ خطا در خواندن repeat_start_date از configs.json: {e}")
+        return datetime.now().date()
+
+def is_repeat_period_active():
+    """بررسی اینکه آیا دوره تکرار هنوز فعال است یا نه"""
+    try:
+        repeat_days = get_repeat_days_from_config()
+        start_date = get_repeat_start_date_from_config()
+        current_date = datetime.now().date()
+        days_passed = (current_date - start_date).days
+        return days_passed < repeat_days
+    except Exception as e:
+        print(f"❌ خطا در بررسی دوره تکرار: {e}")
+        return True  # در صورت خطا، فعال در نظر بگیر
+
+def get_active_weekdays_from_config():
+    """خواندن روزهای فعال هفته از configs.json - برمی‌گرداند لیست اعداد (0=شنبه تا 6=جمعه)"""
+    try:
+        with open('configs.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            weekdays = config.get('active_weekdays', [0, 1, 2, 3, 4, 5, 6])  # پیش‌فرض همه روزها
+            # اطمینان از اینکه لیست است
+            if isinstance(weekdays, list):
+                return weekdays
+            return [0, 1, 2, 3, 4, 5, 6]  # در صورت خطا، همه روزها
+    except Exception as e:
+        print(f"❌ خطا در خواندن active_weekdays از configs.json: {e}")
+        return [0, 1, 2, 3, 4, 5, 6]  # در صورت خطا، همه روزها
+
+def set_active_weekdays_in_config(weekdays):
+    """ذخیره روزهای فعال هفته در configs.json
+    
+    Args:
+        weekdays: لیست اعداد (0=شنبه تا 6=جمعه)
+    """
+    try:
+        # اعتبارسنجی
+        valid_weekdays = [d for d in weekdays if 0 <= d <= 6]
+        if not valid_weekdays:
+            print("⚠️ هیچ روز معتبری انتخاب نشده - همه روزها فعال می‌شوند")
+            valid_weekdays = [0, 1, 2, 3, 4, 5, 6]
+        
+        with open('configs.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        config['active_weekdays'] = sorted(list(set(valid_weekdays)))  # حذف تکراری‌ها و مرتب‌سازی
+        with open('configs.json', 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        
+        weekday_names = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه']
+        active_names = [weekday_names[d] for d in sorted(valid_weekdays)]
+        print(f"✅ روزهای فعال هفته ({', '.join(active_names)}) در configs.json ذخیره شد.")
+        return True
+    except Exception as e:
+        print(f"❌ خطا در ذخیره active_weekdays در configs.json: {e}")
+        return False
+
+def format_weekdays_display(weekdays):
+    """فرمت کردن نمایش روزهای هفته برای نمایش در منو"""
+    weekday_names = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه']
+    weekday_short = ['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج']
+    
+    if len(weekdays) == 7:
+        return "همه روزها"
+    elif len(weekdays) == 0:
+        return "هیچ روزی"
+    elif len(weekdays) <= 3:
+        # نمایش نام کامل
+        return ', '.join([weekday_names[d] for d in sorted(weekdays)])
+    else:
+        # نمایش کوتاه
+        return ', '.join([weekday_short[d] for d in sorted(weekdays)])
+
+def is_today_active_weekday():
+    """بررسی اینکه آیا امروز یکی از روزهای فعال هفته است یا نه"""
+    try:
+        # در Python، weekday() برمی‌گرداند: 0=Monday, 6=Sunday
+        # در ایران: 0=شنبه, 1=یکشنبه, ..., 6=جمعه
+        # پس باید تبدیل کنیم: python_weekday = (iran_weekday + 2) % 7
+        current_weekday_python = datetime.now().weekday()  # 0=Monday, 6=Sunday
+        # تبدیل به فرمت ایرانی: 0=شنبه, 6=جمعه
+        iran_weekday = (current_weekday_python + 2) % 7
+        
+        active_weekdays = get_active_weekdays_from_config()
+        return iran_weekday in active_weekdays
+    except Exception as e:
+        print(f"❌ خطا در بررسی روز هفته: {e}")
+        return True  # در صورت خطا، فعال در نظر بگیر
+
+def is_stop_time_in_past():
+    """بررسی اینکه آیا ساعت توقف خودکار در گذشته است یا نه"""
+    try:
+        stop_time_config = get_stop_time_from_config()
+        if stop_time_config is None:
+            return False  # اگر تنظیم نشده باشد، در گذشته نیست
+        
+        stop_hour, stop_minute = stop_time_config
+        now = datetime.now()
+        stop_time_today = now.replace(hour=stop_hour, minute=stop_minute, second=0, microsecond=0)
+        
+        # اگر ساعت توقف امروز از ساعت فعلی گذشته باشد، در گذشته است
+        return stop_time_today < now
+    except Exception as e:
+        print(f"❌ خطا در بررسی ساعت توقف: {e}")
+        return False  # در صورت خطا، در گذشته در نظر نگیر
+
 # ==================== مدیریت توکن‌ها در فایل JSON ====================
 from tokens_manager import (
     add_tokens_to_json,
@@ -320,6 +553,20 @@ def format_admin_menu(chat_id):
     nardeban_type = mngDetail[3] if len(mngDetail) > 3 else 1
     type_names = {1: "ترتیبی کامل", 2: "تصادفی", 3: "ترتیبی نوبتی", 4: "جریان طبیعی"}
     type_name = type_names.get(nardeban_type, "ترتیبی کامل")
+    
+    # فاصله بین نردبان‌ها
+    interval_minutes = mngDetail[5] if len(mngDetail) > 5 else 5
+    
+    # ساعت و دقیقه توقف و شروع خودکار - از configs.json خوانده می‌شود
+    stop_time = get_stop_time_from_config()
+    start_time = get_start_time_from_config()
+    
+    # تعداد روزهای تکرار - از configs.json خوانده می‌شود
+    repeat_days = get_repeat_days_from_config()
+    
+    # روزهای فعال هفته - از configs.json خوانده می‌شود
+    active_weekdays = get_active_weekdays_from_config()
+    weekdays_text = format_weekdays_display(active_weekdays)
 
     # وضعیت job و فاصله نردبان
     job_id = curd.getJob(chatid=chat_id)
@@ -342,6 +589,17 @@ def format_admin_menu(chat_id):
             interval_text = "ثبت شده (Trigger نامشخص)"
         else:
             interval_text = "job در scheduler یافت نشد"
+    
+    # نمایش ساعت و دقیقه توقف و شروع خودکار
+    stop_time_text = "تنظیم نشده"
+    if stop_time is not None:
+        stop_hour, stop_minute = stop_time
+        stop_time_text = f"{stop_hour:02d}:{stop_minute:02d}"
+    
+    start_time_text = "تنظیم نشده"
+    if start_time is not None:
+        start_hour, start_minute = start_time
+        start_time_text = f"{start_hour:02d}:{start_minute:02d}"
 
     welcome_text = f"""🤖 <b>منوی مدیریت ربات نردبان</b>
 
@@ -353,10 +611,14 @@ def format_admin_menu(chat_id):
    ❌ ناموفق: <b>{stats.get('total_failed', 0)}</b>
 
 ⚙️ <b>تنظیمات جاری:</b>
-   🔽 سقف نردبان: <b>{mngDetail[1]}</b>
+   ⏱️ فاصله بین نردبان‌ها: <b>{interval_minutes} دقیقه</b>
    🎯 نوع نردبان: <b>{type_name}</b>
    {job_status}
-   ⏱️ فاصله نردبان: <b>{interval_text}</b>
+   ⏱️ فاصله فعلی: <b>{interval_text}</b>
+   ▶️ شروع خودکار: <b>{start_time_text}</b>
+   🕐 توقف خودکار: <b>{stop_time_text}</b>
+   🔁 تکرار: <b>{repeat_days} روز</b>
+   📅 روزهای هفته: <b>{weekdays_text}</b>
 
 👇 <i>یکی از گزینه‌های زیر را انتخاب کنید:</i>"""
 
@@ -370,12 +632,23 @@ def format_admin_menu(chat_id):
         [InlineKeyboardButton('📊 مشاهده آمار کامل', callback_data='stats_info')],
         [InlineKeyboardButton('📱 مدیریت لاگین‌ها', callback_data='managelogin')],
         [
-            InlineKeyboardButton(f'🔽 سقف نردبان: {mngDetail[1]}', callback_data='setlimit'),
+            InlineKeyboardButton(f'⏱️ فاصله: {interval_minutes} دقیقه', callback_data='setInterval'),
             InlineKeyboardButton(f'⚙️ نوع: {type_name[:10]}', callback_data='setNardebanType')
         ],
         [
+            InlineKeyboardButton(f'▶️ شروع: {start_time_text}', callback_data='setStartHour'),
+            InlineKeyboardButton(f'🕐 توقف: {stop_time_text}', callback_data='setStopHour')
+        ],
+        [
+            InlineKeyboardButton(f'🔁 تکرار: {repeat_days} روز', callback_data='setRepeatDays'),
+            InlineKeyboardButton(f'📅 روزها: {weekdays_text[:15]}', callback_data='setWeekdays')
+        ],
+        [
             InlineKeyboardButton('🔄 استخراج مجدد', callback_data='reExtract'),
-            InlineKeyboardButton('⏹️ توقف نردبان', callback_data='remJob')
+            InlineKeyboardButton(
+                '⏹️ توقف نردبان' if has_job else '▶️ شروع نردبان',
+                callback_data='remJob' if has_job else 'startJob'
+            )
         ],
         [InlineKeyboardButton('♻️ ریست استخراج‌ها', callback_data='resetTokens')],
     ]
@@ -561,6 +834,130 @@ async def shoro(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"❌ [shoro] کاربر {user.chat.id} ادمین نیست - ارسال پیام خطا")
         await context.bot.send_message(chat_id=user.chat.id, text="شما مجاز به استفاده از ربات نمیباشید .")
 
+async def auto_start_nardeban(chatid):
+    """تابع برای شروع خودکار نردبان در ساعت مشخص شده"""
+    try:
+        # بررسی اینکه آیا دوره تکرار هنوز فعال است
+        if not is_repeat_period_active():
+            print(f"⚠️ [auto_start] دوره تکرار برای کاربر {chatid} به پایان رسیده - شروع خودکار انجام نمی‌شود")
+            # حذف job شروع خودکار
+            try:
+                job_id = f"auto_start_{chatid}"
+                if scheduler:
+                    scheduler.remove_job(job_id)
+                print(f"✅ Job شروع خودکار برای کاربر {chatid} حذف شد (پایان دوره تکرار)")
+            except:
+                pass
+            return
+        
+        # بررسی اینکه آیا job فعالی وجود دارد
+        job_id = curd.getJob(chatid=chatid)
+        if job_id:
+            print(f"⚠️ [auto_start] کاربر {chatid} قبلاً job فعال دارد - شروع خودکار انجام نمی‌شود")
+            return
+        
+        # بررسی اینکه آیا امروز یکی از روزهای فعال هفته است
+        if not is_today_active_weekday():
+            print(f"⚠️ [auto_start] امروز یکی از روزهای فعال هفته نیست - شروع خودکار انجام نمی‌شود")
+            return
+        
+        # بررسی اینکه آیا ربات فعال است
+        manageDetails = curd.getManage(chatid=chatid)
+        if manageDetails[0] != 1:
+            print(f"⚠️ [auto_start] ربات کاربر {chatid} غیرفعال است - شروع خودکار انجام نمی‌شود")
+            return
+        
+        # بررسی اینکه آیا ساعت توقف خودکار در گذشته است
+        if is_stop_time_in_past():
+            stop_time_config = get_stop_time_from_config()
+            if stop_time_config:
+                stop_hour, stop_minute = stop_time_config
+                print(f"⚠️ [auto_start] ساعت توقف خودکار ({stop_hour:02d}:{stop_minute:02d}) در گذشته است - شروع خودکار انجام نمی‌شود")
+                await bot_send_message(
+                    chat_id=chatid,
+                    text=f"⚠️ ساعت توقف خودکار ({stop_hour:02d}:{stop_minute:02d}) در گذشته است.\n\nلطفاً ساعت توقف را به آینده تنظیم کنید یا منتظر فردا بمانید."
+                )
+            return
+        
+        # دریافت ساعت و دقیقه توقف از configs.json
+        stop_time_config = get_stop_time_from_config()
+        if stop_time_config is not None:
+            end_hour, end_minute = stop_time_config
+            # برای سازگاری با startNardebanDasti که فقط hour می‌گیرد، از hour استفاده می‌کنیم
+            end_hour = end_hour
+        else:
+            # اگر تنظیم نشده باشد، از ساعت فعلی + 12 ساعت استفاده می‌کنیم
+            current_hour = datetime.now().hour
+            end_hour = (current_hour + 12) % 24
+        
+        print(f"🚀 [auto_start] شروع خودکار نردبان برای کاربر {chatid} در ساعت {datetime.now().hour:02d}:{datetime.now().minute:02d}")
+        await startNardebanDasti(chatid=chatid, end=end_hour)
+    except Exception as e:
+        print(f"❌ [auto_start] خطا در شروع خودکار نردبان: {e}")
+        import traceback
+        traceback.print_exc()
+
+async def setup_auto_start_job(chatid, start_hour, start_minute=0):
+    """تنظیم job برای شروع خودکار در ساعت و دقیقه مشخص شده با در نظر گیری روزهای هفته"""
+    try:
+        # حذف job قبلی شروع خودکار (اگر وجود داشته باشد)
+        all_jobs = scheduler.get_jobs() if scheduler else []
+        for job in all_jobs:
+            if job.id and f"auto_start_{chatid}" in str(job.id):
+                try:
+                    scheduler.remove_job(job.id)
+                except:
+                    pass
+        
+        # دریافت روزهای فعال هفته
+        active_weekdays_iran = get_active_weekdays_from_config()
+        
+        # تبدیل از فرمت ایرانی به APScheduler
+        # APScheduler: 0=Monday, 1=Tuesday, ..., 6=Sunday
+        # ایران: 0=شنبه, 1=یکشنبه, ..., 6=جمعه
+        # تبدیل: apscheduler_day = (iran_day + 2) % 7
+        active_weekdays_apscheduler = [(day + 2) % 7 for day in active_weekdays_iran]
+        
+        # اضافه کردن job جدید برای شروع خودکار
+        job_id = f"auto_start_{chatid}"
+        
+        # اگر همه روزها فعال هستند، day_of_week را تنظیم نکنیم (همه روزها)
+        if len(active_weekdays_apscheduler) == 7:
+            scheduler.add_job(
+                auto_start_nardeban,
+                trigger="cron",
+                args=[chatid],
+                hour=start_hour,
+                minute=start_minute,
+                id=job_id,
+                replace_existing=True
+            )
+        else:
+            scheduler.add_job(
+                auto_start_nardeban,
+                trigger="cron",
+                args=[chatid],
+                hour=start_hour,
+                minute=start_minute,
+                day_of_week=active_weekdays_apscheduler,
+                id=job_id,
+                replace_existing=True
+            )
+        
+        weekday_names = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه']
+        active_names = [weekday_names[d] for d in sorted(active_weekdays_iran)]
+        print(f"✅ Job شروع خودکار برای کاربر {chatid} در ساعت {start_hour:02d}:{start_minute:02d} در روزهای {', '.join(active_names)} تنظیم شد")
+    except Exception as e:
+        print(f"❌ خطا در تنظیم job شروع خودکار: {e}")
+        import traceback
+        traceback.print_exc()
+
+async def setup_auto_stop_job(chatid, stop_hour, stop_minute=0):
+    """تنظیم job برای توقف خودکار در ساعت و دقیقه مشخص شده"""
+    # این تابع در startNardebanDasti استفاده می‌شود
+    # job توقف در startNardebanDasti تنظیم می‌شود
+    pass
+
 async def mainMenu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.message
@@ -574,7 +971,120 @@ async def mainMenu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status = curd.getStatus(chatid=chatid) #0:slogin , 1:slimit, 2:scode
             print(f"🔍 [mainMenu] status: slogin={status[0]}, slimit={status[1]}, scode={status[2]}")
             
-            if status[1] == 1:
+            # بررسی اینکه آیا باید فاصله بین نردبان‌ها را تنظیم کنیم
+            # استفاده از یک flag جدید در adminp برای sinterval
+            # برای سازگاری، از scode به عنوان flag استفاده می‌کنیم (اگر scode == 2 باشد، یعنی در حال تنظیم interval هستیم)
+            if status[2] == 2:  # scode == 2 به معنای تنظیم interval است
+                try:
+                    interval_value = int(user.text)
+                    if interval_value < 1:
+                        await context.bot.send_message(chat_id=chatid, text="❌ فاصله باید حداقل 1 دقیقه باشد.", reply_to_message_id=user.message_id)
+                        return
+                    curd.setStatusManage(q="interval_minutes", v=interval_value, chatid=chatid)
+                    curd.setStatus(q="scode", v=0, chatid=chatid)
+                    txt = f"🔎 فاصله بین نردبان‌ها به <code>{str(interval_value)}</code> دقیقه تنظیم گردید. ✅"
+                    await context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
+                                     parse_mode='HTML')
+                except ValueError:
+                    await context.bot.send_message(chat_id=chatid, text="❌ لطفاً یک عدد معتبر وارد کنید.", reply_to_message_id=user.message_id)
+            elif status[2] == 3:  # scode == 3 به معنای تنظیم stop_time است
+                try:
+                    # پارس کردن ورودی: می‌تواند "8:30" یا "8" باشد
+                    user_input = user.text.strip()
+                    if ':' in user_input:
+                        parts = user_input.split(':')
+                        if len(parts) != 2:
+                            raise ValueError("فرمت نامعتبر")
+                        stop_hour_value = int(parts[0].strip())
+                        stop_minute_value = int(parts[1].strip())
+                    else:
+                        stop_hour_value = int(user_input)
+                        stop_minute_value = 0
+                    
+                    if stop_hour_value < 0 or stop_hour_value > 23:
+                        await context.bot.send_message(chat_id=chatid, text="❌ ساعت باید بین 0 تا 23 باشد.", reply_to_message_id=user.message_id)
+                        return
+                    if stop_minute_value < 0 or stop_minute_value > 59:
+                        await context.bot.send_message(chat_id=chatid, text="❌ دقیقه باید بین 0 تا 59 باشد.", reply_to_message_id=user.message_id)
+                        return
+                    
+                    if set_stop_time_in_config(stop_hour_value, stop_minute_value):
+                        curd.setStatus(q="scode", v=0, chatid=chatid)
+                        txt = f"🔎 ساعت توقف خودکار به <code>{stop_hour_value:02d}:{stop_minute_value:02d}</code> تنظیم گردید. ✅"
+                        await context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
+                                         parse_mode='HTML')
+                        # بروزرسانی job توقف خودکار
+                        await setup_auto_stop_job(chatid, stop_hour_value, stop_minute_value)
+                    else:
+                        await context.bot.send_message(chat_id=chatid, text="❌ خطا در ذخیره ساعت توقف.", reply_to_message_id=user.message_id)
+                except ValueError as e:
+                    await context.bot.send_message(chat_id=chatid, text="❌ لطفاً فرمت صحیح وارد کنید:\n<code>ساعت:دقیقه</code> یا <code>ساعت</code>\nمثال: <code>22:30</code> یا <code>22</code>", reply_to_message_id=user.message_id, parse_mode='HTML')
+            elif status[2] == 4:  # scode == 4 به معنای تنظیم start_time است
+                try:
+                    # پارس کردن ورودی: می‌تواند "8:30" یا "8" باشد
+                    user_input = user.text.strip()
+                    if ':' in user_input:
+                        parts = user_input.split(':')
+                        if len(parts) != 2:
+                            raise ValueError("فرمت نامعتبر")
+                        start_hour_value = int(parts[0].strip())
+                        start_minute_value = int(parts[1].strip())
+                    else:
+                        start_hour_value = int(user_input)
+                        start_minute_value = 0
+                    
+                    if start_hour_value < 0 or start_hour_value > 23:
+                        await context.bot.send_message(chat_id=chatid, text="❌ ساعت باید بین 0 تا 23 باشد.", reply_to_message_id=user.message_id)
+                        return
+                    if start_minute_value < 0 or start_minute_value > 59:
+                        await context.bot.send_message(chat_id=chatid, text="❌ دقیقه باید بین 0 تا 59 باشد.", reply_to_message_id=user.message_id)
+                        return
+                    
+                    if set_start_time_in_config(start_hour_value, start_minute_value):
+                        curd.setStatus(q="scode", v=0, chatid=chatid)
+                        txt = f"🔎 ساعت شروع خودکار به <code>{start_hour_value:02d}:{start_minute_value:02d}</code> تنظیم گردید. ✅"
+                        await context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
+                                         parse_mode='HTML')
+                        # بروزرسانی job شروع خودکار
+                        await setup_auto_start_job(chatid, start_hour_value, start_minute_value)
+                    else:
+                        await context.bot.send_message(chat_id=chatid, text="❌ خطا در ذخیره ساعت شروع.", reply_to_message_id=user.message_id)
+                except ValueError as e:
+                    await context.bot.send_message(chat_id=chatid, text="❌ لطفاً فرمت صحیح وارد کنید:\n<code>ساعت:دقیقه</code> یا <code>ساعت</code>\nمثال: <code>8:30</code> یا <code>8</code>", reply_to_message_id=user.message_id, parse_mode='HTML')
+            elif status[2] == 5:  # scode == 5 به معنای تنظیم repeat_days است
+                try:
+                    repeat_days_value = int(user.text.strip())
+                    if repeat_days_value < 1:
+                        await context.bot.send_message(chat_id=chatid, text="❌ تعداد روزها باید حداقل 1 باشد.", reply_to_message_id=user.message_id)
+                        return
+                    if repeat_days_value > 3650:  # حداکثر 10 سال
+                        await context.bot.send_message(chat_id=chatid, text="❌ تعداد روزها نمی‌تواند بیشتر از 3650 (10 سال) باشد.", reply_to_message_id=user.message_id)
+                        return
+                    
+                    if set_repeat_days_in_config(repeat_days_value, reset_start_date=True):
+                        curd.setStatus(q="scode", v=0, chatid=chatid)
+                        start_date = get_repeat_start_date_from_config()
+                        end_date = start_date + timedelta(days=repeat_days_value)
+                        txt = f"🔎 تعداد روزهای تکرار به <code>{repeat_days_value}</code> روز تنظیم گردید. ✅\n\n📅 دوره تکرار از <code>{start_date.strftime('%Y-%m-%d')}</code> تا <code>{end_date.strftime('%Y-%m-%d')}</code> فعال است."
+                        await context.bot.send_message(chat_id=chatid, text=txt, reply_to_message_id=user.message_id,
+                                         parse_mode='HTML')
+                        # بروزرسانی jobهای شروع خودکار برای همه ادمین‌ها
+                        start_time = get_start_time_from_config()
+                        if start_time is not None:
+                            start_hour, start_minute = start_time
+                            admins = curd.getAdmins()
+                            for admin_id in admins:
+                                try:
+                                    await setup_auto_start_job(int(admin_id), start_hour, start_minute)
+                                except Exception as e:
+                                    print(f"⚠️ خطا در بروزرسانی job شروع خودکار برای ادمین {admin_id}: {e}")
+                            if Datas.admin:
+                                await setup_auto_start_job(int(Datas.admin), start_hour, start_minute)
+                    else:
+                        await context.bot.send_message(chat_id=chatid, text="❌ خطا در ذخیره تعداد روزهای تکرار.", reply_to_message_id=user.message_id)
+                except ValueError:
+                    await context.bot.send_message(chat_id=chatid, text="❌ لطفاً یک عدد معتبر وارد کنید.\nمثال: <code>365</code>", reply_to_message_id=user.message_id, parse_mode='HTML')
+            elif status[1] == 1:
                 print(f"✅ [mainMenu] پردازش slimit برای کاربر {chatid}")
                 curd.editLimit(newLimit=user.text, chatid=chatid)
                 curd.setStatus(q="slimit", v=0, chatid=chatid)
@@ -1099,14 +1609,166 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             curd.setStatus(q="scode", v=1, chatid=chatid)
             txt = f"🔎 کد با موفقیت به شماره <code>{str(phoneL)}</code>ارسال شد ، لطفا کد را ارسال کنید :  ✅"
             await context.bot.send_message(chat_id=qry.message.chat.id, text=txt, parse_mode='HTML')
-        elif data == "setlimit":
+        elif data == "setInterval":
             try:
                 await qry.answer()  # پاسخ به callback
             except Exception as e:
                 print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
-            curd.setStatus(q="slimit", v=1, chatid=chatid)
+            # استفاده از scode=2 به عنوان flag برای تنظیم interval
+            curd.setStatus(q="scode", v=2, chatid=chatid)
             await context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
-                             text="🤠 لطفاً یک عدد برای تعیین سقف مجاز تعداد اگهی نردبان روازنه ارسال کنید : ")
+                             text="🤠 لطفاً یک عدد برای تعیین فاصله بین نردبان‌ها (به دقیقه) ارسال کنید : ")
+        elif data == "setStartHour":
+            try:
+                await qry.answer()  # پاسخ به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
+            # استفاده از scode=4 به عنوان flag برای تنظیم start_time
+            curd.setStatus(q="scode", v=4, chatid=chatid)
+            await context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
+                             text="🤠 لطفاً ساعت شروع خودکار را وارد کنید:\n\n📌 فرمت: <code>ساعت:دقیقه</code>\nمثال: <code>8:30</code> یا <code>14:15</code>\n\nیا فقط ساعت: <code>8</code>")
+        elif data == "setStopHour":
+            try:
+                await qry.answer()  # پاسخ به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
+            # استفاده از scode=3 به عنوان flag برای تنظیم stop_time
+            curd.setStatus(q="scode", v=3, chatid=chatid)
+            await context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
+                             text="🤠 لطفاً ساعت توقف خودکار را وارد کنید:\n\n📌 فرمت: <code>ساعت:دقیقه</code>\nمثال: <code>22:30</code> یا <code>14:15</code>\n\nیا فقط ساعت: <code>22</code>", parse_mode='HTML')
+        elif data == "setRepeatDays":
+            try:
+                await qry.answer()  # پاسخ به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
+            # استفاده از scode=5 به عنوان flag برای تنظیم repeat_days
+            curd.setStatus(q="scode", v=5, chatid=chatid)
+            await context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
+                             text="🤠 لطفاً تعداد روزهای تکرار را وارد کنید:\n\n📌 مثال: <code>365</code> (برای یک سال)\nیا <code>30</code> (برای یک ماه)")
+        elif data == "setWeekdays":
+            try:
+                await qry.answer()  # پاسخ به callback
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
+            
+            # نمایش منوی انتخاب روزهای هفته
+            active_weekdays = get_active_weekdays_from_config()
+            weekday_names = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه']
+            weekday_short = ['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج']
+            
+            buttons = []
+            for i, (name, short) in enumerate(zip(weekday_names, weekday_short)):
+                is_active = i in active_weekdays
+                emoji = "✅" if is_active else "⚪"
+                buttons.append([
+                    InlineKeyboardButton(
+                        f"{emoji} {name} ({short})",
+                        callback_data=f"toggleWeekday:{i}"
+                    )
+                ])
+            
+            buttons.append([InlineKeyboardButton('✅ تایید', callback_data='confirmWeekdays')])
+            buttons.append([InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')])
+            
+            text = "📅 <b>انتخاب روزهای فعال هفته</b>\n\n"
+            text += "روزهایی که می‌خواهید jobهای خودکار فعال باشند را انتخاب کنید:\n\n"
+            text += "✅ = فعال\n⚪ = غیرفعال"
+            
+            await context.bot.send_message(
+                chat_id=chatid,
+                text=text,
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode='HTML'
+            )
+        elif data.startswith("toggleWeekday:"):
+            # تغییر وضعیت یک روز هفته
+            try:
+                weekday_index = int(data.split(":")[1])
+                active_weekdays = get_active_weekdays_from_config()
+                
+                if weekday_index in active_weekdays:
+                    # حذف از لیست
+                    active_weekdays = [d for d in active_weekdays if d != weekday_index]
+                else:
+                    # اضافه به لیست
+                    active_weekdays.append(weekday_index)
+                
+                # بررسی اینکه حداقل یک روز فعال باشد
+                if not active_weekdays:
+                    try:
+                        await qry.answer(text="❌ حداقل یک روز باید فعال باشد!", show_alert=True)
+                    except:
+                        pass
+                    return
+                
+                # ذخیره موقت (برای نمایش در منو)
+                set_active_weekdays_in_config(active_weekdays)
+                
+                # نمایش مجدد منو با وضعیت جدید
+                weekday_names = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه']
+                weekday_short = ['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج']
+                
+                buttons = []
+                for i, (name, short) in enumerate(zip(weekday_names, weekday_short)):
+                    is_active = i in active_weekdays
+                    emoji = "✅" if is_active else "⚪"
+                    buttons.append([
+                        InlineKeyboardButton(
+                            f"{emoji} {name} ({short})",
+                            callback_data=f"toggleWeekday:{i}"
+                        )
+                    ])
+                
+                buttons.append([InlineKeyboardButton('✅ تایید', callback_data='confirmWeekdays')])
+                buttons.append([InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')])
+                
+                text = "📅 <b>انتخاب روزهای فعال هفته</b>\n\n"
+                text += "روزهایی که می‌خواهید jobهای خودکار فعال باشند را انتخاب کنید:\n\n"
+                text += "✅ = فعال\n⚪ = غیرفعال"
+                
+                try:
+                    await qry.answer()  # پاسخ به callback
+                except:
+                    pass
+                
+                await context.bot.edit_message_text(
+                    chat_id=chatid,
+                    message_id=qry.message.message_id,
+                    text=text,
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                print(f"❌ خطا در toggleWeekday: {e}")
+                try:
+                    await qry.answer(text="❌ خطا در تغییر وضعیت روز", show_alert=True)
+                except:
+                    pass
+        elif data == "confirmWeekdays":
+            # تایید و بروزرسانی jobهای خودکار
+            try:
+                await qry.answer(text="✅ روزهای هفته تنظیم شد", show_alert=False)
+            except:
+                pass
+            
+            # بروزرسانی jobهای شروع خودکار
+            start_time = get_start_time_from_config()
+            if start_time is not None:
+                start_hour, start_minute = start_time
+                admins = curd.getAdmins()
+                for admin_id in admins:
+                    try:
+                        await setup_auto_start_job(int(admin_id), start_hour, start_minute)
+                    except Exception as e:
+                        print(f"⚠️ خطا در بروزرسانی job شروع خودکار برای ادمین {admin_id}: {e}")
+                if Datas.admin:
+                    await setup_auto_start_job(int(Datas.admin), start_hour, start_minute)
+            
+            # بازگشت به منو
+            if qry.message:
+                await send_admin_menu(chat_id=chatid, message_id=qry.message.message_id)
+            else:
+                await send_admin_menu(chat_id=chatid)
         elif data == "managelogin":
             try:
                 await qry.answer()  # پاسخ به callback
@@ -1134,21 +1796,119 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             job_id = curd.getJob(chatid=chatid)
             if job_id:
                 try:
+                    # حذف job نردبان
                     scheduler.remove_job(job_id=job_id)
+                    
+                    # حذف job توقف خودکار مربوطه (اگر وجود داشته باشد)
+                    try:
+                        stop_job_id = f"auto_stop_{chatid}_{job_id}"
+                        scheduler.remove_job(stop_job_id)
+                    except:
+                        pass  # اگر job توقف وجود نداشت، مشکلی نیست
+                    
+                    curd.removeJob(chatid=chatid)
+                    refreshUsed(chatid=chatid)
+                    txtResult = f"✅ عملیات نردبان با موفقیت متوقف شد."
                 except Exception as e:
-                    txtResult = f"در غیر فعال سازی عملیات نردبان یک مشکل وجود دارد ! متن ارور : {str(e)}"
+                    txtResult = f"❌ در غیرفعال‌سازی عملیات نردبان مشکلی وجود دارد:\n{str(e)}"
                     curd.removeJob(chatid=chatid)
-                else:
-                    txtResult = f"عملیات نردبان با آیدی {str(job_id)} با موفقیت غیرفعال سازی شد ."
-                    curd.removeJob(chatid=chatid)
+                    print(f"❌ خطا در حذف job: {e}")
+                    import traceback
+                    traceback.print_exc()
+                
                 try:
                     await qry.answer()  # پاسخ به callback
                 except Exception as e:
                     print(f"⚠️ [qrycall] خطا در پاسخ به callback query (احتمالاً قدیمی است): {e}")
                 await context.bot.send_message(reply_to_message_id=qry.message.message_id, chat_id=chatid,
                                  text=txtResult)
+                # بروزرسانی منو
+                if qry.message:
+                    await send_admin_menu(chat_id=chatid, message_id=qry.message.message_id)
             else:
-                await qry.answer(text="شما هیج نردبان فعالی ندارید !", show_alert=True)
+                await qry.answer(text="شما هیچ نردبان فعالی ندارید!", show_alert=True)
+        elif data == "startJob":
+            # بررسی اینکه آیا job فعالی وجود دارد
+            job_id = curd.getJob(chatid=chatid)
+            if job_id:
+                await qry.answer(text="⚠️ شما یک نردبان فعال دارید!", show_alert=True)
+                return
+            
+            # بررسی اینکه آیا دوره تکرار هنوز فعال است (هماهنگ با auto_start_nardeban)
+            if not is_repeat_period_active():
+                repeat_days = get_repeat_days_from_config()
+                start_date = get_repeat_start_date_from_config()
+                end_date = start_date + timedelta(days=repeat_days)
+                await qry.answer(
+                    text=f"❌ دوره تکرار به پایان رسیده است!\n\n📅 دوره: {start_date.strftime('%Y-%m-%d')} تا {end_date.strftime('%Y-%m-%d')}\n\nلطفاً تعداد روزهای تکرار را افزایش دهید.",
+                    show_alert=True
+                )
+                return
+            
+            # بررسی اینکه آیا امروز یکی از روزهای فعال هفته است (هماهنگ با auto_start_nardeban)
+            if not is_today_active_weekday():
+                active_weekdays = get_active_weekdays_from_config()
+                weekday_names = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه']
+                active_names = [weekday_names[d] for d in sorted(active_weekdays)]
+                current_weekday_python = datetime.now().weekday()
+                iran_weekday = (current_weekday_python + 2) % 7
+                today_name = weekday_names[iran_weekday]
+                await qry.answer(
+                    text=f"❌ امروز ({today_name}) یکی از روزهای فعال هفته نیست!\n\n📅 روزهای فعال: {', '.join(active_names)}\n\nلطفاً روزهای هفته را تنظیم کنید یا منتظر یکی از روزهای فعال بمانید.",
+                    show_alert=True
+                )
+                return
+            
+            # بررسی اینکه آیا ربات فعال است
+            manageDetails = curd.getManage(chatid=chatid)
+            if manageDetails[0] != 1:
+                await qry.answer(text="❌ ابتدا ربات را فعال کنید!", show_alert=True)
+                return
+            
+            # بررسی اینکه آیا لاگین فعالی وجود دارد
+            logins = curd.getCookies(chatid=chatid)
+            if not logins:
+                await qry.answer(text="❌ هیچ لاگین فعالی وجود ندارد!", show_alert=True)
+                return
+            
+            # بررسی اینکه آیا ساعت توقف خودکار در گذشته است (هماهنگ با auto_start_nardeban)
+            if is_stop_time_in_past():
+                stop_time_config = get_stop_time_from_config()
+                if stop_time_config:
+                    stop_hour, stop_minute = stop_time_config
+                    await qry.answer(
+                        text=f"❌ ساعت توقف خودکار ({stop_hour:02d}:{stop_minute:02d}) در گذشته است!\n\nلطفاً ساعت توقف را به آینده تنظیم کنید یا منتظر فردا بمانید.",
+                        show_alert=True
+                    )
+                else:
+                    await qry.answer(
+                        text="❌ ساعت توقف خودکار تنظیم نشده است!",
+                        show_alert=True
+                    )
+                return
+            
+            try:
+                await qry.answer(text="در حال شروع نردبان...", show_alert=False)
+            except Exception as e:
+                print(f"⚠️ [qrycall] خطا در پاسخ به callback query: {e}")
+            
+            # دریافت ساعت و دقیقه توقف از configs.json یا استفاده از ساعت پیش‌فرض (هماهنگ با auto_start_nardeban)
+            stop_time_config = get_stop_time_from_config()
+            if stop_time_config is not None:
+                end_hour, end_minute = stop_time_config
+            else:
+                # اگر تنظیم نشده باشد، از ساعت فعلی + 12 ساعت استفاده می‌کنیم
+                current_hour = datetime.now().hour
+                end_hour = (current_hour + 12) % 24
+                end_minute = 0
+            
+            # شروع نردبان (همان منطق auto_start_nardeban)
+            print(f"🚀 [startJob] شروع دستی نردبان برای کاربر {chatid} در ساعت {datetime.now().hour:02d}:{datetime.now().minute:02d}")
+            await startNardebanDasti(chatid=chatid, end=end_hour)
+            
+            # بروزرسانی منو
+            if qry.message:
+                await send_admin_menu(chat_id=chatid, message_id=qry.message.message_id)
         elif data.startswith("status"):
             details = data.split(":")
             success, message = curd.activeLogin(phone=details[2], status=int(details[1]), chatid=chatid)
@@ -1254,30 +2014,117 @@ async def startNardebanDasti(chatid, end: int):
             
             await bot_send_message(chat_id=chatid, text="✅ استخراج اولیه به پایان رسید.")
     
-    total_nardeban = int(manageDetails[1])
-    currentLimit = round(total_nardeban / len(logins))
-
-    await bot_send_message(chat_id=chatid, text=f"برای هر لاگین سقف نردبان به عدد {str(currentLimit)} است.")
-    curd.setStatusManage(q="climit", v=currentLimit, chatid=chatid)
-
-    current_hour = int(datetime.now().hour)
-    remainTime_hours = end - current_hour
-
-    if remainTime_hours <= 0:
-        await bot_send_message(chat_id=chatid, text="زمان پایان نردبان‌ها از زمان فعلی گذشته است.")
-        return
-
-    stopTime_minutes = round((remainTime_hours * 60) / total_nardeban)
+    # استفاده از فاصله تنظیم شده توسط کاربر
+    interval_minutes = manageDetails[5] if len(manageDetails) > 5 else 5
     nardeban_type = manageDetails[3] if len(manageDetails) > 3 else 1
+    
+    # حذف job توقف خودکار قبلی (اگر وجود داشته باشد) - برای همه انواع
+    try:
+        all_jobs = scheduler.get_jobs() if scheduler else []
+        for existing_job in all_jobs:
+            if existing_job.id and f"auto_stop_{chatid}" in str(existing_job.id):
+                try:
+                    scheduler.remove_job(existing_job.id)
+                except:
+                    pass
+    except Exception as e:
+        print(f"⚠️ خطا در حذف job توقف قبلی: {e}")
+    
+    # استفاده از ساعت و دقیقه توقف از configs.json یا استفاده از end که از دستور /end آمده
+    stop_time_config = get_stop_time_from_config()
+    if stop_time_config is not None:
+        final_stop_hour, final_stop_minute = stop_time_config
+    else:
+        final_stop_hour = end
+        final_stop_minute = 0
     
     if nardeban_type == 4:
         await bot_send_message(chat_id=chatid, text="🎢 نوع نردبان: جریان طبیعی - زمان‌بندی نامنظم فعال است.")
+        
+        # برای نوع 4، یک job توقف خودکار تنظیم می‌کنیم (بدون job interval)
+        # اما باید job_id را از دیتابیس بگیریم یا یک ID موقت بسازیم
+        # در واقع برای نوع 4، job توقف باید job نردبان را متوقف کند
+        # اما چون job interval نداریم، باید یک flag در دیتابیس ذخیره کنیم
+        
+        # ایجاد یک job توقف که فقط یک بار اجرا می‌شود (در ساعت توقف)
+        # این job باید یک flag را تنظیم کند که sendNardeban آن را بررسی کند
+        # یا می‌توانیم job توقف را به گونه‌ای تنظیم کنیم که فقط یک پیام بفرستد
+        
+        # برای سادگی، job توقف را تنظیم می‌کنیم که در ساعت مشخص شده یک پیام بفرستد
+        # و کاربر می‌تواند دستی توقف کند
+        stop_job_id = f"auto_stop_{chatid}_natural"
+        
+        # دریافت روزهای فعال هفته
+        active_weekdays_iran = get_active_weekdays_from_config()
+        active_weekdays_apscheduler = [(day + 2) % 7 for day in active_weekdays_iran]
+        
+        async def stop_natural_flow(chatid):
+            """تابع برای توقف جریان طبیعی"""
+            await bot_send_message(chat_id=chatid, text="🕐 ساعت توقف خودکار رسیده است. لطفاً در صورت نیاز دستی توقف کنید.")
+        
+        if len(active_weekdays_apscheduler) == 7:
+            scheduler.add_job(
+                stop_natural_flow,
+                trigger="cron",
+                args=[chatid],
+                hour=final_stop_hour,
+                minute=final_stop_minute,
+                id=stop_job_id,
+                replace_existing=True
+            )
+        else:
+            scheduler.add_job(
+                stop_natural_flow,
+                trigger="cron",
+                args=[chatid],
+                hour=final_stop_hour,
+                minute=final_stop_minute,
+                day_of_week=active_weekdays_apscheduler,
+                id=stop_job_id,
+                replace_existing=True
+            )
+        
+        await bot_send_message(chat_id=chatid, text=f"🕐 توقف خودکار در ساعت {final_stop_hour:02d}:{final_stop_minute:02d} تنظیم شد.")
         await sendNardeban(chatid)
     else:
-        await bot_send_message(chat_id=chatid, text=f"زمان بین نردبان‌ها حدود {str(stopTime_minutes)} دقیقه است.")
-        job = scheduler.add_job(sendNardeban, "interval", args=[chatid], minutes=stopTime_minutes)
-        scheduler.add_job(remJob, trigger="cron", args=[scheduler, job.id, chatid], hour=end)
+        await bot_send_message(chat_id=chatid, text=f"⏱️ فاصله بین نردبان‌ها: {str(interval_minutes)} دقیقه")
+        
+        # ایجاد job نردبان
+        job = scheduler.add_job(sendNardeban, "interval", args=[chatid], minutes=interval_minutes)
         curd.addJob(chatid=chatid, job=job.id)
+        
+        # ایجاد job توقف خودکار با ID منحصر به فرد
+        stop_job_id = f"auto_stop_{chatid}_{job.id}"
+        
+        # دریافت روزهای فعال هفته برای job توقف (باید در همان روزهایی که شروع فعال است، توقف هم فعال باشد)
+        active_weekdays_iran = get_active_weekdays_from_config()
+        active_weekdays_apscheduler = [(day + 2) % 7 for day in active_weekdays_iran]
+        
+        # اگر همه روزها فعال هستند، day_of_week را تنظیم نکنیم
+        if len(active_weekdays_apscheduler) == 7:
+            scheduler.add_job(
+                remJob,
+                trigger="cron",
+                args=[scheduler, job.id, chatid],
+                hour=final_stop_hour,
+                minute=final_stop_minute,
+                id=stop_job_id,
+                replace_existing=True
+            )
+        else:
+            # توقف فقط در روزهایی که شروع فعال است
+            scheduler.add_job(
+                remJob,
+                trigger="cron",
+                args=[scheduler, job.id, chatid],
+                hour=final_stop_hour,
+                minute=final_stop_minute,
+                day_of_week=active_weekdays_apscheduler,
+                id=stop_job_id,
+                replace_existing=True
+            )
+        
+        await bot_send_message(chat_id=chatid, text=f"🕐 توقف خودکار در ساعت {final_stop_hour:02d}:{final_stop_minute:02d} تنظیم شد.")
 
 def shouldExtractTokens(chatid, available_logins):
     """بررسی می‌کند که آیا باید استخراج انجام شود یا نه
@@ -1656,18 +2503,34 @@ async def handleNardebanResult(result, login_info, chatid, nardebanAPI):
         return False
 
 async def remJob(sch, id, chatid):
+    """تابع برای توقف خودکار job نردبان در ساعت مشخص شده"""
     try:
-        await bot_send_message(chat_id=chatid, text="عملیات نردبان شما با موفقیت به پایان رسید !")
-        sch.remove_job(id)
+        # حذف job نردبان
+        try:
+            sch.remove_job(id)
+        except Exception as e:
+            print(f"⚠️ خطا در حذف job نردبان {id}: {e}")
+        
+        # حذف job توقف خودکار مربوطه (اگر وجود داشته باشد)
+        try:
+            stop_job_id = f"auto_stop_{chatid}_{id}"
+            sch.remove_job(stop_job_id)
+        except:
+            pass  # اگر job توقف وجود نداشت، مشکلی نیست
+        
         curd.removeJob(chatid=chatid)
         refreshUsed(chatid=chatid)
+        
+        await bot_send_message(chat_id=chatid, text="✅ عملیات نردبان شما با موفقیت به پایان رسید!")
     except Exception as e:
         try:
             await bot_send_message(chat_id=chatid,
-                             text=f"در فرایند حذف فرایند زمان بندی نردبان مشکلی وجود دارد ، متن ارور : {str(e)}")
-            print(e)
-        except Exception as e:
-            print(f"Error sending message: {e}")
+                             text=f"❌ در فرایند حذف فرایند زمان‌بندی نردبان مشکلی وجود دارد:\n{str(e)}")
+            print(f"❌ خطا در remJob: {e}")
+            import traceback
+            traceback.print_exc()
+        except Exception as e2:
+            print(f"❌ Error sending message in remJob: {e2}")
 
 async def reExtractTokens(chatid):
     """استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال"""
@@ -1799,6 +2662,23 @@ async def on_startup(application: Application):
     scheduler.configure(event_loop=loop)
     if not scheduler.running:
         scheduler.start()
+    
+    # تنظیم jobهای شروع خودکار برای همه ادمین‌ها
+    try:
+        start_time = get_start_time_from_config()
+        if start_time is not None:
+            start_hour, start_minute = start_time
+            admins = curd.getAdmins()
+            for admin_id in admins:
+                try:
+                    await setup_auto_start_job(int(admin_id), start_hour, start_minute)
+                except Exception as e:
+                    print(f"⚠️ خطا در تنظیم شروع خودکار برای ادمین {admin_id}: {e}")
+            # همچنین برای ادمین پیش‌فرض
+            if Datas.admin:
+                await setup_auto_start_job(int(Datas.admin), start_hour, start_minute)
+    except Exception as e:
+        print(f"⚠️ خطا در تنظیم jobهای شروع خودکار: {e}")
 
 
 async def on_shutdown(application: Application):

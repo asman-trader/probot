@@ -270,7 +270,7 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            command = "CREATE TABLE IF NOT EXISTS manage(id INTEGER PRIMARY KEY AUTOINCREMENT, chatid INTEGER UNIQUE, active INTEGER, limite INTEGER, climit INTEGER, nardeban_type INTEGER, last_round_robin_phone INTEGER)"
+            command = "CREATE TABLE IF NOT EXISTS manage(id INTEGER PRIMARY KEY AUTOINCREMENT, chatid INTEGER UNIQUE, active INTEGER, limite INTEGER, climit INTEGER, nardeban_type INTEGER, last_round_robin_phone INTEGER, interval_minutes INTEGER, stop_hour INTEGER)"
             cur.execute(command)
             # اضافه کردن ستون nardeban_type به جدول موجود (اگر وجود نداشته باشد)
             try:
@@ -284,6 +284,18 @@ class curdCommands:
                 conn.commit()
             except:
                 pass  # ستون قبلاً وجود دارد
+            # اضافه کردن ستون interval_minutes برای تنظیم فاصله بین نردبان‌ها
+            try:
+                cur.execute("ALTER TABLE manage ADD COLUMN interval_minutes INTEGER DEFAULT 5")
+                conn.commit()
+            except:
+                pass  # ستون قبلاً وجود دارد
+            # اضافه کردن ستون stop_hour برای ذخیره ساعت توقف خودکار
+            try:
+                cur.execute("ALTER TABLE manage ADD COLUMN stop_hour INTEGER")
+                conn.commit()
+            except:
+                pass  # ستون قبلاً وجود دارد
             conn.commit()
             cur.close()
             conn.close()
@@ -294,8 +306,8 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "INSERT OR IGNORE INTO manage (chatid, active, limite, climit, nardeban_type, last_round_robin_phone) VALUES (?, ?, ?, ?, ?, ?)"
-            cur.execute(insrt, (chatid, 0, 100, 0, 1, None))  # 1 = ترتیبی کامل هر لاگین (پیش‌فرض)
+            insrt = "INSERT OR IGNORE INTO manage (chatid, active, limite, climit, nardeban_type, last_round_robin_phone, interval_minutes, stop_hour) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            cur.execute(insrt, (chatid, 0, 100, 0, 1, None, 5, None))  # 1 = ترتیبی کامل هر لاگین (پیش‌فرض), 5 = فاصله پیش‌فرض 5 دقیقه
             conn.commit()
             cur.close()
             conn.close()
@@ -614,19 +626,28 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "SELECT active, limite, climit, nardeban_type, last_round_robin_phone FROM manage WHERE chatid = ?"
+            insrt = "SELECT active, limite, climit, nardeban_type, last_round_robin_phone, interval_minutes, stop_hour FROM manage WHERE chatid = ?"
             cur.execute(insrt, (chatid,))
             data = cur.fetchone()
             cur.close()
             conn.close()
             if data:
-                # اگر last_round_robin_phone وجود نداشته باشد (None)، به عنوان None برمی‌گردانیم
+                # اگر interval_minutes وجود نداشته باشد (None)، مقدار پیش‌فرض 5 را برمی‌گردانیم
+                if len(data) < 6 or data[5] is None:
+                    result = (*data[:5], 5) if len(data) >= 5 else (0, 100, 0, 1, None, 5)
+                    # اگر stop_hour وجود نداشته باشد، None اضافه می‌کنیم
+                    if len(result) < 7:
+                        result = (*result, None)
+                    return result
+                # اگر stop_hour وجود نداشته باشد، None اضافه می‌کنیم
+                if len(data) < 7:
+                    return (*data, None)
                 return data
             else:
-                return (0, 100, 0, 1, None)  # پیش‌فرض: ترتیبی کامل، بدون آخرین لاگین
+                return (0, 100, 0, 1, None, 5, None)  # پیش‌فرض: ترتیبی کامل، بدون آخرین لاگین، فاصله 5 دقیقه، بدون ساعت توقف
         except Exception as e:
             print(f"Error getting manage: {e}")
-            return (0, 100, 0, 1, None)
+            return (0, 100, 0, 1, None, 5, None)
 
     def editLimit(self, newLimit, chatid):
         try:
