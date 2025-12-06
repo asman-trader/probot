@@ -2625,6 +2625,9 @@ async def auto_reset_and_extract_if_all_done(chatid):
         # ریست شمارنده‌های استفاده
         curd.refreshUsed(chatid)
         
+        # حذف تمام رکوردهای نردبان شده از جدول sents برای جلوگیری از خطای "اگهی قبلا نردبان شده"
+        curd.remSents(chatid)
+        
         print(f"✅ [auto_reset] ریست کامل انجام شد، شروع استخراج مجدد...")
         
         # استخراج مجدد اگهی‌ها
