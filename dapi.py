@@ -316,6 +316,76 @@ class nardeban:
                         tokens.append(token)
         return tokens
 
+    def _fetch_tokens_by_keywords(self, keywords, brand_token=None):
+        """
+        Helper برای دریافت آگهی‌ها که برچسب‌شان شامل هر یک از کلمات کلیدی باشد.
+        """
+        if not brand_token:
+            brand_token = self.getBranToken()
+        if not brand_token:
+            return []
+
+        headers = {
+            "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 13; SM-S918B Build/TP1A.220624.014)",
+            "X-Device-Model": "SM-S918B",
+            "X-OS-Version": "13",
+            "X-Platform": "android",
+            "Content-Type": "application/json",
+            "Accept": "*/*",
+            'Authorization': f'Basic {self.apikey}',
+        }
+
+        last_item_identifier = ''
+        matched_tokens = []
+
+        while True:
+            json_data = {
+                'brand_token': brand_token,
+                'specification': {
+                    'query': '',
+                    'last_item_identifier': last_item_identifier,
+                },
+            }
+
+            response = requests.post(
+                f'https://api.divar.ir/v8/premium-user/web/business/{brand_token}/post-list',
+                headers=headers,
+                json=json_data
+            )
+
+            if response.status_code != 200:
+                print(f"[fetch_tokens_by_keywords] HTTP {response.status_code} برای brand_token {brand_token}")
+                break
+
+            data = response.json()
+            widgets = data.get('page', {}).get('widget_list', [])
+
+            for widget in widgets:
+                if widget.get('widget_type') != 'POST_ROW':
+                    continue
+                token = widget.get('uid')
+                label = (widget.get('data', {}) or {}).get('label', '') or ''
+
+                label_str = str(label)
+                normalized_label = label_str.replace('‌', '').replace('ٔ', '').replace(' ', '')
+                normalized_lower = normalized_label.lower()
+
+                if any(keyword in normalized_lower for keyword in keywords):
+                    matched_tokens.append({
+                        'token': token,
+                        'label': label_str,
+                        'title': widget.get('data', {}).get('title', '')
+                    })
+
+            infinite_scroll_response = data.get('page', {}).get('infinite_scroll_response', {})
+            has_next = infinite_scroll_response.get('last_item_identifier')
+            if not has_next:
+                break
+
+            last_item_identifier = has_next
+
+        return matched_tokens
+
     def get_all_tokens(self, brand_token):
         headers = {
             "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 13; SM-S918B Build/TP1A.220624.014)",
@@ -362,6 +432,22 @@ class nardeban:
                 break
 
         return all_tokens
+
+    def get_tokens_needing_renewal(self, brand_token=None):
+        """
+        آگهی‌هایی که به زودی نیاز به تمدید دارند (قبل از منقضی شدن).
+        """
+        keywords = ['تمدید', 'نیازبهتمدید', 'نیاز به تمدید', 'انقضا', 'expire', 'renew']
+        normalized_keywords = [kw.replace('‌', '').replace(' ', '').lower() for kw in keywords]
+        return self._fetch_tokens_by_keywords(normalized_keywords, brand_token=brand_token)
+
+    def get_expired_tokens(self, brand_token=None):
+        """
+        آگهی‌هایی که وضعیت‌شان منقضی شده است.
+        """
+        keywords = ['منقضی', 'expired']
+        normalized_keywords = [kw.replace('‌', '').replace(' ', '').lower() for kw in keywords]
+        return self._fetch_tokens_by_keywords(normalized_keywords, brand_token=brand_token)
 
     def getBranToken(self):
         try:
@@ -450,14 +536,13 @@ class nardeban:
                                 # بازگشت لیست با مقدار [1, token, number] در صورت موفقیت
                                 return [1, token, number]
 
-    def sendNardebanWithToken(self, number, chatid, token):
+    def sendNardebanWithToken(self, number, chatid, token, require_pending=True):
         """نردبان یک توکن خاص"""
-        # چک کردن اینکه توکن قبلاً نردبان نشده باشد
-        # بررسی اینکه آیا این توکن در لیست pending است یا نه
-        pending_tokens = self.curd.get_pending_tokens_by_phone(phone=number, chatid=chatid)
-        if token not in pending_tokens:
-            # توکن قبلاً نردبان شده است
-            return [0, token, "این توکن قبلاً نردبان شده است"]
+        if require_pending:
+            pending_tokens = self.curd.get_pending_tokens_by_phone(phone=number, chatid=chatid)
+            if token not in pending_tokens:
+                # توکن قبلاً نردبان شده است
+                return [0, token, "این توکن قبلاً نردبان شده است"]
         
         try:
             planCost = int(self.selectPlan(token=token))

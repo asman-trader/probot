@@ -1,5 +1,7 @@
 # Standard library imports
 from datetime import datetime, timedelta
+import html
+from zoneinfo import ZoneInfo
 import asyncio
 import random
 import sys
@@ -38,6 +40,15 @@ from apscheduler.triggers.interval import IntervalTrigger
 from loadConfig import configBot
 from curds import curdCommands, CreateDB
 from dapi import api, nardeban
+
+# منطقه زمانی مرجع برای تمام محاسبات زمان‌بندی
+TEHRAN_TZ = ZoneInfo("Asia/Tehran")
+
+
+def now_tehran():
+    """datetime aware با منطقه زمانی تهران"""
+    return datetime.now(TEHRAN_TZ)
+
 
 # توابع مدیریت ساعت و دقیقه توقف و شروع در configs.json
 def get_stop_time_from_config():
@@ -148,7 +159,7 @@ def set_repeat_days_in_config(days, reset_start_date=False):
         config['repeat_days'] = days
         # ذخیره یا به‌روزرسانی تاریخ شروع تکرار
         if reset_start_date or 'repeat_start_date' not in config:
-            config['repeat_start_date'] = datetime.now().strftime('%Y-%m-%d')
+            config['repeat_start_date'] = now_tehran().strftime('%Y-%m-%d')
         with open('configs.json', 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         print(f"✅ تعداد روزهای تکرار ({days}) در configs.json ذخیره شد.")
@@ -165,17 +176,17 @@ def get_repeat_start_date_from_config():
             date_str = config.get('repeat_start_date')
             if date_str:
                 return datetime.strptime(date_str, '%Y-%m-%d').date()
-            return datetime.now().date()
+            return now_tehran().date()
     except Exception as e:
         print(f"❌ خطا در خواندن repeat_start_date از configs.json: {e}")
-        return datetime.now().date()
+        return now_tehran().date()
 
 def is_repeat_period_active():
     """بررسی اینکه آیا دوره تکرار هنوز فعال است یا نه"""
     try:
         repeat_days = get_repeat_days_from_config()
         start_date = get_repeat_start_date_from_config()
-        current_date = datetime.now().date()
+        current_date = now_tehran().date()
         days_passed = (current_date - start_date).days
         return days_passed < repeat_days
     except Exception as e:
@@ -245,7 +256,7 @@ def is_today_active_weekday():
         # در Python، weekday() برمی‌گرداند: 0=Monday, 6=Sunday
         # در ایران: 0=شنبه, 1=یکشنبه, ..., 6=جمعه
         # پس باید تبدیل کنیم: python_weekday = (iran_weekday + 2) % 7
-        current_weekday_python = datetime.now().weekday()  # 0=Monday, 6=Sunday
+        current_weekday_python = now_tehran().weekday()  # 0=Monday, 6=Sunday
         # تبدیل به فرمت ایرانی: 0=شنبه, 6=جمعه
         iran_weekday = (current_weekday_python + 2) % 7
         
@@ -263,7 +274,7 @@ def is_stop_time_in_past():
             return False  # اگر تنظیم نشده باشد، در گذشته نیست
         
         stop_hour, stop_minute = stop_time_config
-        now = datetime.now()
+        now = now_tehran()
         stop_time_today = now.replace(hour=stop_hour, minute=stop_minute, second=0, microsecond=0)
         
         # اگر ساعت توقف امروز از ساعت فعلی گذشته باشد، در گذشته است
@@ -622,42 +633,42 @@ def format_admin_menu(chat_id):
 
 👇 <i>یکی از گزینه‌های زیر را انتخاب کنید:</i>"""
 
+    # منوی اصلی مینیمال
     btns = [
+        # وضعیت ربات و کنترل اصلی
         [
             InlineKeyboardButton(
                 f"{'🟢' if is_active else '🔴'} {'خاموش کردن' if is_active else 'روشن کردن'} ربات",
                 callback_data="setactive:0" if is_active else "setactive:1"
             )
         ],
-        [InlineKeyboardButton('📊 مشاهده آمار کامل', callback_data='stats_info')],
-        [InlineKeyboardButton('📱 مدیریت لاگین‌ها', callback_data='managelogin')],
         [
-            InlineKeyboardButton(f'⏱️ فاصله: {interval_minutes} دقیقه', callback_data='setInterval'),
-            InlineKeyboardButton(f'⚙️ نوع: {type_name[:10]}', callback_data='setNardebanType')
-        ],
-        [
-            InlineKeyboardButton(f'▶️ شروع: {start_time_text}', callback_data='setStartHour'),
-            InlineKeyboardButton(f'🕐 توقف: {stop_time_text}', callback_data='setStopHour')
-        ],
-        [
-            InlineKeyboardButton(f'🔁 تکرار: {repeat_days} روز', callback_data='setRepeatDays'),
-            InlineKeyboardButton(f'📅 روزها: {weekdays_text[:15]}', callback_data='setWeekdays')
-        ],
-        [
-            InlineKeyboardButton('🔄 استخراج مجدد', callback_data='reExtract'),
             InlineKeyboardButton(
                 '⏹️ توقف نردبان' if has_job else '▶️ شروع نردبان',
                 callback_data='remJob' if has_job else 'startJob'
             )
         ],
-        [InlineKeyboardButton('♻️ ریست استخراج‌ها', callback_data='resetTokens')],
+        
+        # منوهای اصلی
+        [
+            InlineKeyboardButton('📊 آمار و گزارشات', callback_data='stats_menu'),
+            InlineKeyboardButton('📱 مدیریت لاگین‌ها', callback_data='managelogin')
+        ],
+        [
+            InlineKeyboardButton('⚙️ تنظیمات ربات', callback_data='settings_menu'),
+            InlineKeyboardButton('🔧 عملیات پیشرفته', callback_data='advanced_menu')
+        ]
     ]
 
+    # منوی ادمین اصلی (فقط برای ادمین اصلی)
     if int(chat_id) == int(Datas.admin):
         btns.append([InlineKeyboardButton('👥 مدیریت ادمین‌ها', callback_data='manageAdmins')])
 
-    btns.append([InlineKeyboardButton('❓ راهنما', callback_data='help_menu')])
-    btns.append([InlineKeyboardButton('🔁 بروزرسانی منو', callback_data='refreshMenu')])
+    # دکمه‌های کمکی
+    btns.append([
+        InlineKeyboardButton('❓ راهنما', callback_data='help_menu'),
+        InlineKeyboardButton('🔁 بروزرسانی', callback_data='refreshMenu')
+    ])
 
     return welcome_text, InlineKeyboardMarkup(btns)
 
@@ -686,8 +697,204 @@ def format_login_management_menu(chat_id):
             ])
         buttons.append([InlineKeyboardButton('➕ اضافه کردن لاگین جدید', callback_data='addlogin')])
 
-    buttons.append([InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')])
+    buttons.append([InlineKeyboardButton('🔙 بازگشت به منو اصلی', callback_data='backToMenu')])
     return text, InlineKeyboardMarkup(buttons)
+
+
+def _chunk_lines_for_message(lines, limit=3500):
+    """تقسیم خطوط متن به چند پیام برای جلوگیری از تجاوز از محدودیت تلگرام."""
+    chunks = []
+    current = ""
+    for raw_line in lines:
+        line = raw_line or ""
+        addition = line if not current else f"\n{line}"
+        if len(current) + len(addition) > limit:
+            if current:
+                chunks.append(current)
+            current = line
+        else:
+            current += addition
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def report_ads_by_status(chatid, heading, empty_text, fetch_func):
+    """گزارش وضعیت آگهی‌ها بر اساس تابع fetch_func (مثل تمدید یا منقضی)."""
+    logins = curd.getLogins(chatid=chatid)
+    if not logins or logins == 0:
+        await bot_send_message(chat_id=chatid, text="⚠️ هیچ لاگین فعالی برای بررسی وجود ندارد.")
+        return
+
+    active_logins = [login for login in logins if login[2] == 1]
+    if not active_logins:
+        await bot_send_message(chat_id=chatid, text="⚠️ همه لاگین‌ها غیرفعال هستند. ابتدا یک شماره را فعال کنید.")
+        return
+
+    lines = [heading, ""]
+    total_found = 0
+
+    for phone, cookie, _ in active_logins:
+        nardeban_api = nardeban(apiKey=cookie)
+
+        try:
+            tokens_info = await asyncio.to_thread(fetch_func, nardeban_api)
+        except Exception as e:
+            err_text = str(e).strip() or "خطای نامشخص"
+            err_text = html.escape(err_text[:120])
+            lines.append(f"📱 <b>{phone}</b>: ❌ خطا در دریافت اطلاعات ({err_text})")
+            lines.append("")
+            continue
+
+        if not tokens_info:
+            lines.append(f"📱 <b>{phone}</b>: {empty_text}")
+            lines.append("")
+            continue
+
+        total_found += len(tokens_info)
+        lines.append(f"📱 <b>{phone}</b> - {len(tokens_info)} آگهی یافت شد:")
+        for idx, info in enumerate(tokens_info[:5], 1):
+            token = info.get('token')
+            label = html.escape((info.get('label') or 'نیاز به تمدید').strip())
+            title = html.escape((info.get('title') or '').strip())
+            extra = f" – {title}" if title else ""
+            if token:
+                short_token = html.escape(token[:8] + "...")
+                ad_link = f"https://divar.ir/v/{token}"
+                lines.append(f"   {idx}. <a href='{ad_link}'>🔗 {short_token}</a> ({label}{extra})")
+            else:
+                lines.append(f"   {idx}. {label}{extra}")
+        if len(tokens_info) > 5:
+            lines.append(f"   • ... {len(tokens_info) - 5} آگهی دیگر")
+        lines.append("")
+
+    lines.append("━━━━━━━━━━━━━━━━")
+    lines.append(f"📊 جمع کل: {total_found} آگهی")
+
+    for chunk in _chunk_lines_for_message(lines):
+        await bot_send_message(
+            chat_id=chatid,
+            text=chunk,
+            parse_mode='HTML',
+            disable_web_page_preview=False
+        )
+
+
+async def report_ads_needing_renewal(chatid):
+    await report_ads_by_status(
+        chatid=chatid,
+        heading="🧭 <b>گزارش آگهی‌های نیازمند تمدید (قبل از انقضا)</b>",
+        empty_text="هیچ آگهی نزدیک به انقضا نیست.",
+        fetch_func=lambda api: api.get_tokens_needing_renewal()
+    )
+
+
+async def report_expired_ads(chatid):
+    await report_ads_by_status(
+        chatid=chatid,
+        heading="📛 <b>گزارش آگهی‌های منقضی شده</b>",
+        empty_text="هیچ آگهی منقضی نشده‌ای وجود ندارد.",
+        fetch_func=lambda api: api.get_expired_tokens()
+    )
+
+
+async def renew_ads_by_status(chatid, heading, fetch_func):
+    """تمدید گروهی آگهی‌ها بر اساس وضعیت (نزدیک انقضا یا منقضی)."""
+    logins = curd.getLogins(chatid=chatid)
+    if not logins or logins == 0:
+        await bot_send_message(chat_id=chatid, text="⚠️ هیچ لاگین فعالی برای تمدید وجود ندارد.")
+        return
+
+    active_logins = [login for login in logins if login[2] == 1]
+    if not active_logins:
+        await bot_send_message(chat_id=chatid, text="⚠️ همه لاگین‌ها غیرفعال هستند. ابتدا یک شماره را فعال کنید.")
+        return
+
+    lines = [heading, ""]
+    total_attempted = 0
+    total_success = 0
+    total_failed = 0
+
+    for phone, cookie, _ in active_logins:
+        nardeban_api = nardeban(apiKey=cookie)
+
+        try:
+            tokens_info = await asyncio.to_thread(fetch_func, nardeban_api)
+        except Exception as e:
+            err_text = html.escape((str(e).strip() or "خطای نامشخص")[:120])
+            lines.append(f"📱 <b>{phone}</b>: ❌ خطا در دریافت لیست ({err_text})")
+            lines.append("")
+            continue
+
+        if not tokens_info:
+            lines.append(f"📱 <b>{phone}</b>: هیچ آگهی مطابق معیار یافت نشد.")
+            lines.append("")
+            continue
+
+        phone_success = 0
+        phone_failed = 0
+
+        for info in tokens_info:
+            token = info.get('token')
+            if not token:
+                continue
+
+            total_attempted += 1
+            try:
+                result = await asyncio.to_thread(
+                    nardeban_api.sendNardebanWithToken,
+                    int(phone),
+                    chatid,
+                    token,
+                    False
+                )
+            except Exception as e:
+                phone_failed += 1
+                total_failed += 1
+                err_text = html.escape((str(e).strip() or "خطای نامشخص")[:80])
+                lines.append(f"   • {token[:8]}...: ❌ خطا ({err_text})")
+                continue
+
+            if result and result[0] == 1:
+                phone_success += 1
+                total_success += 1
+            else:
+                phone_failed += 1
+                total_failed += 1
+                err_msg = result[2] if result and len(result) > 2 else "نامشخص"
+                lines.append(f"   • {token[:8]}...: ❌ {html.escape(err_msg[:100])}")
+
+        lines.append(f"📱 <b>{phone}</b>: ✅ {phone_success} | ❌ {phone_failed}")
+        lines.append("")
+
+    lines.append("━━━━━━━━━━━━━━━━")
+    lines.append(f"🔁 کل تلاش‌ها: {total_attempted}")
+    lines.append(f"✅ موفق: {total_success}")
+    lines.append(f"❌ ناموفق: {total_failed}")
+
+    for chunk in _chunk_lines_for_message(lines):
+        await bot_send_message(
+            chat_id=chatid,
+            text=chunk,
+            parse_mode='HTML',
+            disable_web_page_preview=True
+        )
+
+
+async def renew_need_ads(chatid):
+    await renew_ads_by_status(
+        chatid=chatid,
+        heading="♻️ <b>تمدید همه آگهی‌های نیازمند تمدید</b>",
+        fetch_func=lambda api: api.get_tokens_needing_renewal()
+    )
+
+
+async def renew_expired_ads(chatid):
+    await renew_ads_by_status(
+        chatid=chatid,
+        heading="♻️ <b>تمدید همه آگهی‌های منقضی شده</b>",
+        fetch_func=lambda api: api.get_expired_tokens()
+    )
 
 
 async def send_admin_menu(chat_id, message_id=None):
@@ -887,10 +1094,11 @@ async def auto_start_nardeban(chatid):
             end_hour = end_hour
         else:
             # اگر تنظیم نشده باشد، از ساعت فعلی + 12 ساعت استفاده می‌کنیم
-            current_hour = datetime.now().hour
+            current_hour = now_tehran().hour
             end_hour = (current_hour + 12) % 24
         
-        print(f"🚀 [auto_start] شروع خودکار نردبان برای کاربر {chatid} در ساعت {datetime.now().hour:02d}:{datetime.now().minute:02d}")
+        now_local = now_tehran()
+        print(f"🚀 [auto_start] شروع خودکار نردبان برای کاربر {chatid} در ساعت {now_local.hour:02d}:{now_local.minute:02d}")
         await startNardebanDasti(chatid=chatid, end=end_hour)
     except Exception as e:
         print(f"❌ [auto_start] خطا در شروع خودکار نردبان: {e}")
@@ -1208,7 +1416,7 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # ساخت منوی فرعی برای آمار
             stats_menu_buttons = [
                 [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
-                [InlineKeyboardButton('🔙 بازگشت به منو', callback_data='backToMenu')]
+                [InlineKeyboardButton('🔙 بازگشت به آمار', callback_data='stats_menu')]
             ]
             
             # ساخت InlineKeyboardMarkup
@@ -1374,6 +1582,12 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 except:
                     pass
+        elif data == "checkRenewal":
+            await qry.answer(text="در حال بررسی آگهی‌های نیازمند تمدید...", show_alert=False)
+            await report_ads_needing_renewal(chatid=chatid)
+        elif data == "renewNeedAds":
+            await qry.answer(text="در حال تمدید آگهی‌های نزدیک به انقضا...", show_alert=False)
+            await renew_need_ads(chatid=chatid)
         elif data == "reExtract":
             # استخراج مجدد اگهی‌ها برای تمام لاگین‌های فعال
             await qry.answer(text="در حال استخراج مجدد اگهی‌ها...", show_alert=False)
@@ -1451,6 +1665,75 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_admin_menu(chat_id=chatid, message_id=qry.message.message_id)
             else:
                 await send_admin_menu(chat_id=chatid)
+        
+        # زیرمنوهای جدید
+        elif data == "stats_menu":
+            await qry.answer()
+            stats_buttons = [
+                [InlineKeyboardButton('📊 مشاهده آمار کامل', callback_data='stats_info')],
+                [InlineKeyboardButton('📋 لیست اگهی‌ها', callback_data='listAds')],
+                [InlineKeyboardButton('🧭 آگهی‌های نیاز به تمدید', callback_data='checkRenewal')],
+                [InlineKeyboardButton('🔙 بازگشت به منو اصلی', callback_data='backToMenu')]
+            ]
+            await context.bot.edit_message_text(
+                chat_id=chatid,
+                message_id=qry.message.message_id,
+                text="📊 <b>آمار و گزارشات</b>\n\nیکی از گزینه‌های زیر را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup(stats_buttons),
+                parse_mode='HTML'
+            )
+        
+        elif data == "settings_menu":
+            await qry.answer()
+            mngDetail = curd.getManage(chatid=chatid)
+            interval_minutes = mngDetail[1] if len(mngDetail) > 1 and mngDetail[1] is not None else 30
+            
+            # نوع نردبان
+            nardeban_type = mngDetail[3] if len(mngDetail) > 3 else 1
+            type_names = {1: "ترتیبی", 2: "تصادفی", 3: "نوبتی", 4: "طبیعی"}
+            type_name = type_names.get(nardeban_type, "نامشخص")
+            
+            # زمان شروع و توقف
+            start_time = get_start_time_from_config()
+            stop_time = get_stop_time_from_config()
+            start_time_text = f"{start_time[0]:02d}:{start_time[1]:02d}" if start_time else "تنظیم نشده"
+            stop_time_text = f"{stop_time[0]:02d}:{stop_time[1]:02d}" if stop_time else "تنظیم نشده"
+            
+            settings_buttons = [
+                [
+                    InlineKeyboardButton(f'⏱️ فاصله: {interval_minutes} دقیقه', callback_data='setInterval'),
+                    InlineKeyboardButton(f'⚙️ نوع: {type_name}', callback_data='setNardebanType')
+                ],
+                [
+                    InlineKeyboardButton(f'▶️ شروع: {start_time_text}', callback_data='setStartHour'),
+                    InlineKeyboardButton(f'🕐 توقف: {stop_time_text}', callback_data='setStopHour')
+                ],
+                [InlineKeyboardButton('📅 تنظیم روزهای فعال', callback_data='setWeekdays')],
+                [InlineKeyboardButton('🔙 بازگشت به منو اصلی', callback_data='backToMenu')]
+            ]
+            await context.bot.edit_message_text(
+                chat_id=chatid,
+                message_id=qry.message.message_id,
+                text="⚙️ <b>تنظیمات ربات</b>\n\nتنظیمات مورد نظر را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup(settings_buttons),
+                parse_mode='HTML'
+            )
+        
+        elif data == "advanced_menu":
+            await qry.answer()
+            advanced_buttons = [
+                [InlineKeyboardButton('🔄 استخراج مجدد', callback_data='reExtract')],
+                [InlineKeyboardButton('♻️ تمدید آگهی‌های نیازمند', callback_data='renewNeedAds')],
+                [InlineKeyboardButton('♻️ ریست کامل استخراج‌ها', callback_data='resetTokens')],
+                [InlineKeyboardButton('🔙 بازگشت به منو اصلی', callback_data='backToMenu')]
+            ]
+            await context.bot.edit_message_text(
+                chat_id=chatid,
+                message_id=qry.message.message_id,
+                text="🔧 <b>عملیات پیشرفته</b>\n\n⚠️ این عملیات با احتیاط انجام دهید:",
+                reply_markup=InlineKeyboardMarkup(advanced_buttons),
+                parse_mode='HTML'
+            )
         elif data == "help_menu":
             try:
                 await qry.answer()
@@ -1850,7 +2133,7 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 active_weekdays = get_active_weekdays_from_config()
                 weekday_names = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه']
                 active_names = [weekday_names[d] for d in sorted(active_weekdays)]
-                current_weekday_python = datetime.now().weekday()
+                current_weekday_python = now_tehran().weekday()
                 iran_weekday = (current_weekday_python + 2) % 7
                 today_name = weekday_names[iran_weekday]
                 await qry.answer(
@@ -1898,12 +2181,13 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 end_hour, end_minute = stop_time_config
             else:
                 # اگر تنظیم نشده باشد، از ساعت فعلی + 12 ساعت استفاده می‌کنیم
-                current_hour = datetime.now().hour
+                current_hour = now_tehran().hour
                 end_hour = (current_hour + 12) % 24
                 end_minute = 0
             
             # شروع نردبان (همان منطق auto_start_nardeban)
-            print(f"🚀 [startJob] شروع دستی نردبان برای کاربر {chatid} در ساعت {datetime.now().hour:02d}:{datetime.now().minute:02d}")
+            now_local = now_tehran()
+            print(f"🚀 [startJob] شروع دستی نردبان برای کاربر {chatid} در ساعت {now_local.hour:02d}:{now_local.minute:02d}")
             await startNardebanDasti(chatid=chatid, end=end_hour)
             
             # بروزرسانی منو
@@ -2125,12 +2409,16 @@ async def startNardebanDasti(chatid, end: int):
             )
         
         await bot_send_message(chat_id=chatid, text=f"🕐 توقف خودکار در ساعت {final_stop_hour:02d}:{final_stop_minute:02d} تنظیم شد.")
+        
+        # اجرای اولین نردبان دقیقاً در زمان شروع برای جلوگیری از تاخیر یک دور کامل
+        await sendNardeban(chatid)
 
 def shouldExtractTokens(chatid, available_logins):
     """بررسی می‌کند که آیا باید استخراج انجام شود یا نه
-    فقط زمانی استخراج انجام می‌شود که:
+    استخراج در موارد زیر انجام می‌شود:
     1. هیچ توکن pending وجود نداشته باشد
-    2. حداقل یک توکن نردبان شده (success) وجود داشته باشد
+    2. هیچ توکن در JSON وجود نداشته باشد (اولین بار)
+    3. یا اینکه همه توکن‌ها پردازش شده باشند (success/failed)
     """
     try:
         # چک کردن اینکه آیا توکن pending در JSON وجود دارد
@@ -2140,18 +2428,31 @@ def shouldExtractTokens(chatid, available_logins):
         if has_pending:
             return False
         
-        # بررسی اینکه آیا حداقل یک توکن نردبان شده (success) وجود دارد
-        # استفاده از getStats برای بررسی تعداد نردبان شده
-        stats = curd.getStats(chatid=chatid)
-        
-        # اگر حداقل یک نردبان انجام شده باشد و هیچ pending در JSON وجود نداشته باشد
-        # یعنی همه توکن‌ها نردبان شده‌اند و باید استخراج مجدد انجام شود
-        if stats['total_nardeban'] > 0:
-            # همه اگهی‌ها نردبان شده‌اند - استخراج مجدد انجام می‌شود
+        # بررسی وجود توکن‌ها در JSON
+        tokens_data = load_tokens_json()
+        if chatid not in tokens_data:
+            # اولین بار - هیچ توکنی وجود ندارد
+            print(f"ℹ️ [shouldExtractTokens] اولین استخراج برای chatid={chatid}")
             return True
         
-        # اگر هیچ نردبانی انجام نشده یا هنوز pending وجود دارد، استخراج نکن
+        # شمارش توکن‌های موجود
+        total_tokens = 0
+        for phone_data in tokens_data[chatid].values():
+            if isinstance(phone_data, dict):
+                total_tokens += len(phone_data.get("pending", []))
+                total_tokens += len(phone_data.get("success", []))
+                total_tokens += len(phone_data.get("failed", []))
+        
+        # اگر هیچ توکنی وجود ندارد، استخراج کن
+        if total_tokens == 0:
+            print(f"ℹ️ [shouldExtractTokens] هیچ توکنی در JSON وجود ندارد، استخراج انجام می‌شود")
+            return True
+        
+        # اگر توکن وجود دارد اما pending نیست، یعنی همه پردازش شده‌اند
+        # در این حالت، تابع auto_reset_and_extract_if_all_done باید فراخوانی شود
+        print(f"ℹ️ [shouldExtractTokens] توکن‌ها موجود اما pending نیست - نیاز به بررسی ریست")
         return False
+        
     except Exception as e:
         print(f"Error in shouldExtractTokens: {e}")
         return False
@@ -2245,6 +2546,108 @@ async def trigger_extract_if_done(chatid):
     except Exception as e:
         print(f"Error in trigger_extract_if_done: {e}")
 
+def are_all_ads_processed(chatid):
+    """
+    بررسی می‌کند که آیا همه اگهی‌ها پردازش شده‌اند (نردبان شده یا failed)
+    """
+    try:
+        # بررسی اینکه آیا هیچ اگهی pending وجود دارد
+        has_pending = has_pending_tokens_in_json(chatid=chatid)
+        if has_pending:
+            return False
+        
+        # بررسی وجود اگهی‌های پردازش شده
+        tokens_data = load_tokens_json()
+        if chatid not in tokens_data:
+            return False
+        
+        # شمارش اگهی‌های پردازش شده
+        total_processed = 0
+        for phone_data in tokens_data[chatid].values():
+            if isinstance(phone_data, dict):
+                total_processed += len(phone_data.get("success", []))
+                total_processed += len(phone_data.get("failed", []))
+        
+        # اگر حداقل یک اگهی پردازش شده باشد و هیچ pending نباشد
+        return total_processed > 0
+        
+    except Exception as e:
+        print(f"Error in are_all_ads_processed: {e}")
+        return False
+
+async def auto_reset_and_extract_if_all_done(chatid):
+    """
+    بررسی می‌کند که آیا همه اگهی‌ها نردبان شده‌اند یا نه
+    اگر همه نردبان شده باشند، فایل اگهی‌ها را ریست کرده و استخراج مجدد انجام می‌دهد
+    """
+    try:
+        print(f"🔍 [auto_reset] بررسی وضعیت اگهی‌ها برای chatid={chatid}")
+        
+        # بررسی اینکه آیا همه اگهی‌ها پردازش شده‌اند
+        if not are_all_ads_processed(chatid):
+            print(f"ℹ️ [auto_reset] همه اگهی‌ها هنوز پردازش نشده‌اند، ریست انجام نمی‌شود")
+            return False
+        
+        # شمارش اگهی‌های پردازش شده برای نمایش
+        tokens_data = load_tokens_json()
+        total_processed = 0
+        if chatid in tokens_data:
+            for phone_data in tokens_data[chatid].values():
+                if isinstance(phone_data, dict):
+                    total_processed += len(phone_data.get("success", []))
+                    total_processed += len(phone_data.get("failed", []))
+        
+        print(f"✅ [auto_reset] همه اگهی‌ها ({total_processed}) پردازش شده‌اند. شروع ریست و استخراج مجدد...")
+        
+        # ارسال پیام اطلاع‌رسانی
+        await bot_send_message(
+            chat_id=chatid, 
+            text=f"🔄 <b>ریست خودکار اگهی‌ها</b>\n\n"
+                 f"✅ همه اگهی‌ها ({total_processed}) پردازش شدند\n"
+                 f"🔄 در حال ریست فایل اگهی‌ها و استخراج مجدد...",
+            parse_mode='HTML'
+        )
+        
+        # ریست کامل توکن‌های این chatid از JSON
+        reset_success = reset_tokens_for_chat(chatid)
+        if not reset_success:
+            print(f"❌ [auto_reset] خطا در ریست توکن‌ها از JSON")
+            await bot_send_message(chat_id=chatid, text="❌ خطا در ریست فایل اگهی‌ها")
+            return False
+        
+        # حذف توکن‌ها از دیتابیس نیز
+        logins = curd.getCookies(chatid=chatid)
+        if logins:
+            for login in logins:
+                phone = login[0]
+                curd.delete_tokens_by_phone(phone=int(phone))
+        
+        # ریست شمارنده‌های استفاده
+        curd.refreshUsed(chatid)
+        
+        print(f"✅ [auto_reset] ریست کامل انجام شد، شروع استخراج مجدد...")
+        
+        # استخراج مجدد اگهی‌ها
+        if logins:
+            await extractTokensIfNeeded(chatid, logins)
+            await bot_send_message(
+                chat_id=chatid, 
+                text="✅ <b>ریست و استخراج مجدد با موفقیت انجام شد</b>\n\n"
+                     "🎯 اگهی‌های جدید آماده نردبان هستند",
+                parse_mode='HTML'
+            )
+            return True
+        else:
+            await bot_send_message(chat_id=chatid, text="⚠️ هیچ لاگین فعالی برای استخراج مجدد یافت نشد")
+            return False
+            
+    except Exception as e:
+        print(f"❌ [auto_reset] خطا در auto_reset_and_extract_if_all_done: {e}")
+        import traceback
+        traceback.print_exc()
+        await bot_send_message(chat_id=chatid, text=f"❌ خطا در ریست خودکار: {str(e)}")
+        return False
+
 async def sendNardeban(chatid):
     try:
         logins = curd.getCookies(chatid=chatid)  # 0 : Phone , 1:Cookie , 2 : used
@@ -2289,6 +2692,10 @@ async def sendNardeban(chatid):
         
         # بررسی و استخراج توکن‌ها فقط در صورتی که همه اگهی‌ها نردبان شده باشند
         await extractTokensIfNeeded(chatid, available_logins)
+        
+        # بررسی اضافی: اگر همه اگهی‌ها پردازش شده‌اند، ریست و استخراج مجدد انجام بده
+        print(f"🔍 [sendNardeban] بررسی نهایی برای ریست خودکار...")
+        await auto_reset_and_extract_if_all_done(chatid)
         
         # نوع 1: ترتیبی کامل هر لاگین
         # رفتار: هر لاگین → همه آگهی‌هاش کامل نردبان می‌شود → بعد لاگین بعدی
@@ -2450,8 +2857,12 @@ async def sendNardeban(chatid):
                     # برنامه‌ریزی برای نردبان بعدی با فاصله نامنظم
                     # استفاده از scheduler global
                     global scheduler
-                    scheduler.add_job(sendNardeban, "date", args=[chatid], 
-                                   run_date=datetime.now() + timedelta(minutes=next_interval))
+                    scheduler.add_job(
+                        sendNardeban,
+                        "date",
+                        args=[chatid],
+                        run_date=now_tehran() + timedelta(minutes=next_interval)
+                    )
                     await bot_send_message(chat_id=chatid, 
                                      text=f"⏰ نردبان بعدی در {next_interval} دقیقه انجام می‌شود.")
             except Exception as e:
@@ -2477,6 +2888,11 @@ async def handleNardebanResult(result, login_info, chatid, nardebanAPI):
             updated = update_token_status(chatid=chatid, phone=int(phone), token=token, new_status="success")
             if updated:
                 print(f"✅ توکن {token} به وضعیت success تغییر یافت (نردبان موفق)")
+                
+                # بررسی اینکه آیا این آخرین اگهی pending بود
+                remaining_pending = has_pending_tokens_in_json(chatid=chatid)
+                if not remaining_pending:
+                    print(f"🎯 [handleNardebanResult] همه اگهی‌ها پردازش شدند - آماده ریست خودکار")
             else:
                 print(f"⚠️ توکن {token} در JSON یافت نشد یا به‌روزرسانی نشد")
         
@@ -2498,8 +2914,8 @@ async def handleNardebanResult(result, login_info, chatid, nardebanAPI):
         except Exception as e:
             print(f"Error sending message: {e}")
         
-        # اگر هیچ اگهی pending باقی نمانده باشد، بلافاصله استخراج جدید انجام بده
-        await trigger_extract_if_done(chatid)
+        # اگر هیچ اگهی pending باقی نمانده باشد، بلافاصله ریست و استخراج جدید انجام بده
+        await auto_reset_and_extract_if_all_done(chatid)
         return True
     elif result[0] == 0:
         # اگر نردبان موفق نبود - به‌روزرسانی وضعیت به failed
@@ -2662,12 +3078,41 @@ def refreshUsed(chatid):
 
 def build_application():
     global application_instance
-    application = (
-        ApplicationBuilder()
-        .token(Datas.token)
-        .rate_limiter(AIORateLimiter())
-        .build()
-    )
+    
+    # Fix timezone issue by setting environment variable
+    import os
+    
+    # Set timezone to UTC to avoid timezone detection issues
+    os.environ['TZ'] = 'UTC'
+    
+    # Try to import pytz, if not available use fallback
+    try:
+        import pytz
+        timezone_available = True
+    except ImportError:
+        print("⚠️ pytz not available, using fallback timezone handling")
+        timezone_available = False
+    
+    try:
+        # Try to create application without JobQueue to avoid timezone issues
+        application = (
+            ApplicationBuilder()
+            .token(Datas.token)
+            .rate_limiter(AIORateLimiter())
+            .build()
+        )
+    except Exception as e:
+        print(f"❌ خطا در ساخت Application با rate limiter: {e}")
+        try:
+            # Try without rate limiter
+            application = (
+                ApplicationBuilder()
+                .token(Datas.token)
+                .build()
+            )
+        except Exception as e2:
+            print(f"❌ خطا در ساخت Application ساده: {e2}")
+            raise e2
     application_instance = application
 
     application.add_handler(CommandHandler('start', start))
