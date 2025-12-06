@@ -478,6 +478,20 @@ class curdCommands:
             print(f"Error getting limit login: {e}")
             return 0
 
+    def reset_nardeban_count(self, phone):
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            insrt = "UPDATE logins SET used = ? WHERE phone = ?"
+            cur.execute(insrt, (0, phone))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return 1
+        except Exception as e:
+            print(f"Error resetting nardeban count: {e}")
+            return 0
+
     def activeLogin(self, phone, status, chatid=None):
         """
         فعال یا غیرفعال کردن یک لاگین.
