@@ -50,6 +50,37 @@ def now_tehran():
     return datetime.now(TEHRAN_TZ)
 
 
+# تبدیل تاریخ میلادی به شمسی (جلالی) - بدون وابستگی خارجی
+def gregorian_to_jalali(gy, gm, gd):
+    """برگرفته از الگوریتم عمومی تبدیل میلادی به جلالی"""
+    g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    if gm > 2:
+        gy2 = gy + 1
+    else:
+        gy2 = gy
+    days = 355666 + (365 * gy) + ((gy2 + 3) // 4) - ((gy2 + 99) // 100) + ((gy2 + 399) // 400) + gd + g_d_m[gm - 1]
+    jy = -1595 + (33 * (days // 12053))
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + (days // 31)
+        jd = 1 + (days % 31)
+    else:
+        jm = 7 + ((days - 186) // 30)
+        jd = 1 + ((days - 186) % 30)
+    return jy, jm, jd
+
+
+def format_jalali_datetime(dt):
+    """فرمت شمسی برای نمایش تاریخ و زمان"""
+    jy, jm, jd = gregorian_to_jalali(dt.year, dt.month, dt.day)
+    return f"{jy:04d}/{jm:02d}/{jd:02d} {dt.strftime('%H:%M:%S')}"
+
+
 # توابع مدیریت ساعت و دقیقه توقف و شروع در configs.json
 def get_stop_time_from_config():
     """خواندن ساعت و دقیقه توقف خودکار از configs.json - برمی‌گرداند (hour, minute) یا None"""
@@ -612,9 +643,12 @@ def format_admin_menu(chat_id):
         start_hour, start_minute = start_time
         start_time_text = f"{start_hour:02d}:{start_minute:02d}"
 
+    current_time_text = format_jalali_datetime(now_tehran())
+    
     welcome_text = f"""🤖 <b>منوی مدیریت ربات نردبان</b>
 
 {status_emoji} <b>وضعیت ربات:</b> {status_text}
+⏱️ <b>زمان فعلی:</b> {current_time_text}
 📊 <b>آمار کلی:</b>
    ✅ نردبان شده: <b>{stats['total_nardeban']}</b>
    📦 کل استخراج: <b>{stats['total_tokens']}</b>
@@ -3093,8 +3127,8 @@ def build_application():
     # Fix timezone issue by setting environment variable
     import os
     
-    # Set timezone to UTC to avoid timezone detection issues
-    os.environ['TZ'] = 'UTC'
+    # Set timezone explicitly to Tehran
+    os.environ['TZ'] = 'Asia/Tehran'
     
     # Try to import pytz, if not available use fallback
     try:
