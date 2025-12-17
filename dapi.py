@@ -291,6 +291,27 @@ class nardeban:
                 return 1
             else:
                 return 0
+
+    def get_post_details(self, token):
+        """
+        دریافت جزئیات آگهی (بدون افشای کوکی) و برگرداندن JSON
+        """
+        try:
+            resp = requests.get(
+                f"https://api.divar.ir/v8/post/{token}",
+                headers=self.headers,
+                cookies=self.cookies,
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                return False, f"HTTP {resp.status_code}", {}
+            try:
+                data = resp.json()
+            except Exception as je:
+                return False, f"JSON error: {je}", {}
+            return True, "ok", data
+        except Exception as e:
+            return False, str(e), {}
     def getPosts(self):
         tokens = []
         brantToken = self.getBranToken()

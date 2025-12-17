@@ -794,8 +794,8 @@ async def report_ads_by_status(chatid, heading, empty_text, fetch_func):
             extra = f" – {title}" if title else ""
             if token:
                 short_token = html.escape(token[:8] + "...")
-                ad_link = f"https://divar.ir/v/{token}"
-                lines.append(f"   {idx}. <a href='{ad_link}'>🔗 {short_token}</a> ({label}{extra})")
+                # لینک خارجی حذف شد؛ صرفاً توکن و عنوان نمایش داده می‌شود تا سشن امن بماند
+                lines.append(f"   {idx}. 🔒 {short_token} ({label}{extra})")
             else:
                 lines.append(f"   {idx}. {label}{extra}")
         if len(tokens_info) > 5:
@@ -812,6 +812,123 @@ async def report_ads_by_status(chatid, heading, empty_text, fetch_func):
             parse_mode='HTML',
             disable_web_page_preview=False
         )
+
+
+async def view_post_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش جزئیات آگهی داخل ربات با استفاده از کوکی لاگین (بدون افشای کوکی)."""
+    chatid = update.effective_chat.id
+    args = context.args if context.args else []
+    if not args:
+        await bot_send_message(chat_id=chatid, text="⚠️ لطفاً توکن آگهی را وارد کنید. مثال:\n/post abcdefg123")
+        return
+
+    token = args[0].strip()
+
+    # انتخاب یک لاگین فعال برای درخواست
+    logins = curd.getLogins(chatid=chatid)
+    if not logins or logins == 0:
+        await bot_send_message(chat_id=chatid, text="⚠️ هیچ لاگین فعالی موجود نیست.")
+        return
+    active_login = next((l for l in logins if l[2] == 1), logins[0])
+
+    try:
+        nardeban_api = nardeban(apiKey=active_login[1])
+        ok, msg, data = nardeban_api.get_post_details(token)
+        if not ok:
+            await bot_send_message(chat_id=chatid, text=f"❌ خطا در دریافت آگهی: {msg}")
+            return
+
+        post = data.get("post", {})
+        title = post.get("title") or ""
+        desc = post.get("description") or ""
+        city = (post.get("city") or {}).get("name") or ""
+        district = (post.get("district") or {}).get("title") or ""
+
+        # تاریخ ایجاد/بروزرسانی
+        created_at = post.get("created_at") or post.get("creation_date") or ""
+        created_text = ""
+        try:
+            if created_at:
+                # تلاش برای تبدیل به datetime و نمایش شمسی
+                dt_obj = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                created_text = format_jalali_datetime(dt_obj)
+        except Exception:
+            created_text = str(created_at)
+
+        # ویژگی‌ها (attribute/fields)
+        attrs = post.get("attributes") or post.get("fields") or []
+        attr_lines = []
+        if isinstance(attrs, list):
+            for attr in attrs[:8]:
+                title_attr = (attr.get("title") or attr.get("label") or "").strip()
+                value_attr = (attr.get("value") or attr.get("text") or "").strip()
+                if title_attr or value_attr:
+                    attr_lines.append(f"• {html.escape(title_attr)}: {html.escape(value_attr)}")
+
+        # تصاویر (اولین 3 لینک)
+        images_raw = post.get("images") or data.get("images") or []
+        images = []
+        if isinstance(images_raw, list):
+            for img in images_raw:
+                url = ""
+                if isinstance(img, dict):
+                    url = img.get("url") or img.get("src") or img.get("file") or ""
+                elif isinstance(img, str):
+                    url = img
+                if url:
+                    images.append(url)
+                if len(images) >= 3:
+                    break
+
+        price = ""
+        try:
+            price_info = post.get("price", {})
+            if isinstance(price_info, dict):
+                price = price_info.get("label") or price_info.get("unit") or ""
+        except:
+            price = ""
+
+        # کوتاه کردن متن توضیحات
+        desc_short = desc[:800] + ("…" if len(desc) > 800 else "")
+
+        lines = []
+        if title:
+            lines.append(f"🏷️ <b>{html.escape(title)}</b>")
+        lines.append(f"🔑 توکن: <code>{html.escape(token)}</code>")
+        if city or district:
+            lines.append(f"📍 {html.escape(city)}{(' - ' + html.escape(district)) if district else ''}")
+        if price:
+            lines.append(f"💰 {html.escape(price)}")
+        if created_text:
+            lines.append(f"🗓️ {html.escape(created_text)}")
+        if attr_lines:
+            lines.append("")
+            lines.append("🔹 ویژگی‌ها:")
+            lines.extend(attr_lines)
+        if desc_short:
+            lines.append("")
+            lines.append(html.escape(desc_short))
+
+        if not lines:
+            import json as _json
+            payload = html.escape(_json.dumps(data, ensure_ascii=False)[:900])
+            lines = [f"🔑 توکن: <code>{html.escape(token)}</code>", "", payload]
+
+        message = "\n".join(lines)
+        await bot_send_message(chat_id=chatid, text=message, parse_mode='HTML')
+
+        # ارسال حداکثر 3 تصویر
+        if images:
+            bot = get_bot()
+            if bot:
+                for idx, url in enumerate(images):
+                    caption = "🖼️ تصویر آگهی" if idx == 0 else None
+                    try:
+                        await bot.send_photo(chat_id=chatid, photo=url, caption=caption)
+                    except Exception as e:
+                        print(f"⚠️ خطا در ارسال تصویر {idx+1}: {e}")
+    except Exception as e:
+        await bot_send_message(chat_id=chatid, text=f"❌ خطا در دریافت جزئیات: {str(e)}")
 
 
 async def report_ads_needing_renewal(chatid):
@@ -1189,6 +1306,24 @@ async def setup_auto_start_job(chatid, start_hour, start_minute=0):
         weekday_names = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه']
         active_names = [weekday_names[d] for d in sorted(active_weekdays_iran)]
         print(f"✅ Job شروع خودکار برای کاربر {chatid} در ساعت {start_hour:02d}:{start_minute:02d} در روزهای {', '.join(active_names)} تنظیم شد")
+
+        # اگر هم‌اکنون در بازه شروع تا توقف هستیم، یک‌بار همین حالا هم اجرا کن
+        now_local = now_tehran()
+        start_today = now_local.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+        stop_cfg = get_stop_time_from_config()
+        stop_today = None
+        if stop_cfg:
+            sh, sm = stop_cfg
+            stop_today = now_local.replace(hour=sh, minute=sm, second=0, microsecond=0)
+
+        # در صورتی که زمان شروع گذشته باشد و (یا زمان توقف تعریف نشده یا هنوز نرسیده) اجرا شود
+        if start_today <= now_local and (stop_today is None or now_local < stop_today):
+            try:
+                print(f"⚡ [auto_start] اجرای فوری به‌دلیل گذشتن از زمان شروع برای کاربر {chatid}")
+                await auto_start_nardeban(chatid)
+            except Exception as e:
+                print(f"⚠️ خطا در اجرای فوری auto_start: {e}")
+
     except Exception as e:
         print(f"❌ خطا در تنظیم job شروع خودکار: {e}")
         import traceback
@@ -3163,6 +3298,7 @@ def build_application():
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('end', shoro))
     application.add_handler(CommandHandler('add', addadmin, filters=filters.User(user_id=Datas.admin)))
+    application.add_handler(CommandHandler('post', view_post_details))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mainMenu))
     application.add_handler(CallbackQueryHandler(qrycall))
 
