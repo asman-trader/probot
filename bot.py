@@ -1331,9 +1331,63 @@ async def setup_auto_start_job(chatid, start_hour, start_minute=0):
 
 async def setup_auto_stop_job(chatid, stop_hour, stop_minute=0):
     """تنظیم job برای توقف خودکار در ساعت و دقیقه مشخص شده"""
-    # این تابع در startNardebanDasti استفاده می‌شود
-    # job توقف در startNardebanDasti تنظیم می‌شود
-    pass
+    try:
+        if scheduler is None:
+            print("⚠️ scheduler در دسترس نیست - job توقف تنظیم نشد")
+            return
+
+        # حذف jobهای توقف قبلی مربوط به این کاربر
+        try:
+            all_jobs = scheduler.get_jobs()
+            for job in all_jobs:
+                if job.id and f"auto_stop_{chatid}" in str(job.id):
+                    try:
+                        scheduler.remove_job(job.id)
+                    except Exception as e:
+                        print(f"⚠️ خطا در حذف job توقف قبلی {job.id}: {e}")
+        except Exception as e:
+            print(f"⚠️ خطا در لیست/حذف jobهای توقف: {e}")
+
+        # یافتن job نردبان فعال
+        job_id = curd.getJob(chatid=chatid)
+        if not job_id:
+            print(f"ℹ️ job نردبان فعالی برای chatid={chatid} یافت نشد؛ job توقف تنظیم نشد.")
+            return
+
+        stop_job_id = f"auto_stop_{chatid}_{job_id}"
+
+        # روزهای فعال هفته
+        active_weekdays_iran = get_active_weekdays_from_config()
+        active_weekdays_apscheduler = [(d + 2) % 7 for d in active_weekdays_iran]
+
+        # اگر همه روزها فعال هستند، day_of_week را مشخص نکن
+        if len(active_weekdays_apscheduler) == 7:
+            scheduler.add_job(
+                remJob,
+                trigger="cron",
+                args=[scheduler, job_id, chatid],
+                hour=stop_hour,
+                minute=stop_minute,
+                id=stop_job_id,
+                replace_existing=True,
+            )
+        else:
+            scheduler.add_job(
+                remJob,
+                trigger="cron",
+                args=[scheduler, job_id, chatid],
+                hour=stop_hour,
+                minute=stop_minute,
+                day_of_week=active_weekdays_apscheduler,
+                id=stop_job_id,
+                replace_existing=True,
+            )
+
+        print(f"✅ Job توقف خودکار برای کاربر {chatid} در {stop_hour:02d}:{stop_minute:02d} تنظیم شد (job={stop_job_id})")
+    except Exception as e:
+        print(f"❌ خطا در تنظیم job توقف خودکار: {e}")
+        import traceback
+        traceback.print_exc()
 
 async def mainMenu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
