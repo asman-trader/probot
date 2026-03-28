@@ -232,8 +232,29 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            command = "CREATE TABLE IF NOT EXISTS adminp(id INTEGER PRIMARY KEY AUTOINCREMENT, chatid INTEGER UNIQUE, slogin INTEGER, slimit INTEGER, scode INTEGER)"
+            command = (
+                "CREATE TABLE IF NOT EXISTS adminp("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "chatid INTEGER UNIQUE, "
+                "slogin INTEGER, "
+                "slimit INTEGER, "
+                "scode INTEGER"
+                ")"
+            )
             cur.execute(command)
+
+            # اطمینان از وجود ستون ssearch برای مدیریت حالت جستجو در دیوار
+            # در SQLite امکان IF NOT EXISTS برای ستون نیست، پس در یک try/except انجام می‌دهیم
+            try:
+                cur.execute("ALTER TABLE adminp ADD COLUMN ssearch INTEGER DEFAULT 0")
+                conn.commit()
+            except Exception as e:
+                # اگر ستون از قبل وجود داشته باشد، خطا را نادیده می‌گیریم
+                # سایر خطاها فقط لاگ می‌شوند تا جدول خراب نشود
+                msg = str(e)
+                if "duplicate column name" not in msg.lower():
+                    print(f"Warning while ensuring ssearch column in adminp: {e}")
+
             conn.commit()
             cur.close()
             conn.close()
@@ -302,6 +323,30 @@ class curdCommands:
         except Exception as e:
             print(f"Error creating manage table: {e}")
 
+    def cTable_web_commands(self):
+        """ایجاد جدول صف فرمان‌های پنل وب"""
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            command = """
+                CREATE TABLE IF NOT EXISTS web_commands(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chatid INTEGER NOT NULL,
+                    command_type TEXT NOT NULL,
+                    payload TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    result TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    processed_at TEXT
+                )
+            """
+            cur.execute(command)
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error creating web_commands table: {e}")
+
     def addManage(self, chatid):
         try:
             conn = self._get_connection()
@@ -343,6 +388,22 @@ class curdCommands:
         except Exception as e:
             print(e)
             return 0
+
+    def delLoginByChatid(self, phone, chatid):
+        """حذف لاگین فقط برای یک chatid خاص (ایمن‌تر برای پنل وب)"""
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            insrt = "DELETE FROM logins WHERE phone = ? AND chatid = ?"
+            cur.execute(insrt, (phone, int(chatid)))
+            conn.commit()
+            affected = cur.rowcount
+            cur.close()
+            conn.close()
+            return affected > 0
+        except Exception as e:
+            print(f"Error deleting login by chatid: {e}")
+            return False
 
     def setStatus(self, q, v, chatid):
         try:
@@ -795,6 +856,156 @@ class curdCommands:
                 'total_pending': 0,
                 'total_failed': 0
             }
+
+    def addWebCommand(self, chatid, command_type, payload_json="{}"):
+        """افزودن فرمان جدید به صف پنل وب"""
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            insrt = "INSERT INTO web_commands (chatid, command_type, payload, status) VALUES (?, ?, ?, 'pending')"
+            cur.execute(insrt, (int(chatid), str(command_type), str(payload_json)))
+            conn.commit()
+            command_id = cur.lastrowid
+            cur.close()
+            conn.close()
+            return command_id
+        except Exception as e:
+            print(f"Error adding web command: {e}")
+            return None
+
+    def getPendingWebCommands(self, limit=20):
+        """دریافت فرمان‌های pending برای پردازش توسط worker"""
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            insrt = """
+                SELECT id, chatid, command_type, payload, status, created_at
+                FROM web_commands
+                WHERE status = 'pending'
+                ORDER BY id ASC
+                LIMIT ?
+            """
+            cur.execute(insrt, (int(limit),))
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+            return rows
+        except Exception as e:
+            print(f"Error getting pending web commands: {e}")
+            return []
+
+    def has_web_command_in_flight(self, chatid, command_type):
+        """
+        آیا برای این چت، startJob (یا نوع دیگر) هنوز در صف یا در حال پردازش معتبر است؟
+        ردیف‌های processing خیلی قدیمی نادیده گرفته می‌شوند (مثلاً بعد از کرش worker که
+        completeWebCommand صدا زده نشده و UI برای همیشه «در حال شروع» می‌ماند).
+        """
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT 1 FROM web_commands
+                WHERE chatid = ? AND command_type = ?
+                  AND (
+                    status = 'pending'
+                    OR (
+                      status = 'processing'
+                      AND datetime(created_at) > datetime('now', '-15 minutes')
+                    )
+                  )
+                LIMIT 1
+                """,
+                (int(chatid), str(command_type)),
+            )
+            ok = cur.fetchone() is not None
+            cur.close()
+            conn.close()
+            return ok
+        except Exception as e:
+            print(f"Error has_web_command_in_flight: {e}")
+            return False
+
+    def reset_abandoned_processing_web_commands(self):
+        """با بالا آمدن worker: ردیف‌های processing مانده از اجرای قبلی را failed می‌کند."""
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE web_commands
+                SET status = 'failed',
+                    result = 'پردازش رها شده (worker قبلی متوقف شد؛ در صورت نیاز دوباره بزنید)',
+                    processed_at = CURRENT_TIMESTAMP
+                WHERE status = 'processing'
+                """
+            )
+            n = cur.rowcount
+            conn.commit()
+            cur.close()
+            conn.close()
+            if n:
+                print(f"ℹ️ web_commands: {n} ردیف processing قدیمی به failed تبدیل شد.")
+            return n
+        except Exception as e:
+            print(f"Error reset_abandoned_processing_web_commands: {e}")
+            return 0
+
+    def lockWebCommand(self, command_id):
+        """قفل نرم فرمان برای جلوگیری از پردازش همزمان"""
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            insrt = "UPDATE web_commands SET status = 'processing' WHERE id = ? AND status = 'pending'"
+            cur.execute(insrt, (int(command_id),))
+            conn.commit()
+            updated = cur.rowcount
+            cur.close()
+            conn.close()
+            return updated > 0
+        except Exception as e:
+            print(f"Error locking web command: {e}")
+            return False
+
+    def completeWebCommand(self, command_id, success=True, result_text=""):
+        """تکمیل فرمان پردازش شده"""
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            status = "done" if success else "failed"
+            insrt = """
+                UPDATE web_commands
+                SET status = ?, result = ?, processed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+            cur.execute(insrt, (status, str(result_text), int(command_id)))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return 1
+        except Exception as e:
+            print(f"Error completing web command: {e}")
+            return 0
+
+    def getRecentWebCommands(self, limit=50):
+        """نمایش آخرین وضعیت فرمان‌ها در پنل"""
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            insrt = """
+                SELECT id, chatid, command_type, payload, status, result, created_at, processed_at
+                FROM web_commands
+                ORDER BY id DESC
+                LIMIT ?
+            """
+            cur.execute(insrt, (int(limit),))
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+            return rows
+        except Exception as e:
+            print(f"Error getting recent web commands: {e}")
+            return []
 
 
 class CreateDB:

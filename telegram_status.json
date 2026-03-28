@@ -1,0 +1,5 @@
+{
+  "state": "retrying",
+  "detail": "httpx.ConnectError: All connection attempts failed",
+  "updated_at": "2026-03-28T15:05:31.107682+03:30"
+}

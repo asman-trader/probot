@@ -9,6 +9,10 @@ import time
 import io
 import json
 import os
+import atexit
+import logging
+import socket
+import subprocess
 
 # تنظیم encoding برای Windows console
 if sys.platform == 'win32':
@@ -22,7 +26,7 @@ from telegram import (
     InlineKeyboardMarkup,
     CallbackQuery,
 )
-from telegram.error import TimedOut, NetworkError
+from telegram.error import TimedOut, NetworkError, Conflict
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -35,6 +39,36 @@ from telegram.ext import (
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+
+
+def _configure_telegram_poll_log_throttle(interval_sec: float = 90.0):
+    """
+    PTB هر بار getUpdates خطا بخورد با سطح ERROR لاگ می‌زند (مثلاً قطع VPN/فیلترینگ).
+    بدون throttle کنسول پر از تکرار می‌شود؛ هر interval_sec فقط یک بار نمایش داده می‌شود.
+    """
+    class _ThrottleTelegramPollError(logging.Filter):
+        __slots__ = ("_last", "_interval")
+
+        def __init__(self, interval: float):
+            super().__init__()
+            self._last = 0.0
+            self._interval = interval
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            try:
+                msg = record.getMessage()
+            except Exception:
+                return True
+            if "Error while getting Updates:" not in msg:
+                return True
+            now = time.monotonic()
+            if now - self._last < self._interval:
+                return False
+            self._last = now
+            return True
+
+    logging.getLogger("telegram.ext._updater").addFilter(_ThrottleTelegramPollError(interval_sec))
+
 
 # Local imports
 from loadConfig import configBot
@@ -250,6 +284,15 @@ def format_weekdays_display(weekdays):
         # نمایش کوتاه
         return ', '.join([weekday_short[d] for d in sorted(weekdays)])
 
+def iran_weekday_to_apscheduler_cron_dow(iran_day: int) -> int:
+    """روز هفته ایرانی (۰=شنبه … ۶=جمعه) → شمارهٔ روز کران APScheduler (۰=دوشنبه … ۶=یکشنبه).
+
+    کران APScheduler همان قرارداد ۰=Monday … ۶=Sunday را دارد؛ با زمان‌بند به‌منطقهٔ Asia/Tehran
+    ساعت شروع/توقف دقیقاً مطابق ساعت دیوار تهران اجرا می‌شود.
+    """
+    return (iran_day + 5) % 7
+
+
 def is_today_active_weekday():
     """بررسی اینکه آیا امروز یکی از روزهای فعال هفته است یا نه"""
     try:
@@ -335,7 +378,17 @@ except Exception as e:
     sys.exit(1)
 
 application_instance: Application | None = None
-scheduler = AsyncIOScheduler(timezone="Asia/Tehran")
+scheduler = AsyncIOScheduler(
+    timezone=TEHRAN_TZ,
+    job_defaults={
+        # اگر برای چند ثانیه/دقیقه event loop شلوغ بود، همان اجرای کران از دست نرود
+        "misfire_grace_time": 300,
+        "coalesce": True,
+    },
+)
+aux_processes: list[subprocess.Popen] = []
+BOT_LOCK_FILE = ".bot.lock"
+TELEGRAM_STATUS_FILE = "telegram_status.json"
 
 
 def get_bot():
@@ -344,8 +397,184 @@ def get_bot():
     return application_instance.bot
 
 
+def update_telegram_status(state: str, detail: str = ""):
+    """ثبت وضعیت اتصال تلگرام برای نمایش در پنل وب"""
+    try:
+        payload = {
+            "state": state,
+            "detail": detail,
+            "updated_at": now_tehran().isoformat(),
+        }
+        with open(TELEGRAM_STATUS_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def acquire_bot_lock() -> bool:
+    """جلوگیری از اجرای هم‌زمان چند bot.py روی یک سیستم"""
+    if os.path.exists(BOT_LOCK_FILE):
+        try:
+            with open(BOT_LOCK_FILE, "r", encoding="utf-8") as f:
+                old_pid = int((f.read() or "0").strip())
+            if _pid_alive(old_pid):
+                print(f"⚠️ bot.py قبلاً در حال اجراست (pid={old_pid}).")
+                return False
+        except Exception:
+            pass
+    try:
+        with open(BOT_LOCK_FILE, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+        return True
+    except Exception as e:
+        print(f"❌ خطا در ایجاد lock فایل bot: {e}")
+        return False
+
+
+def release_bot_lock():
+    try:
+        if os.path.exists(BOT_LOCK_FILE):
+            with open(BOT_LOCK_FILE, "r", encoding="utf-8") as f:
+                pid_in_file = int((f.read() or "0").strip())
+            if pid_in_file == os.getpid():
+                os.remove(BOT_LOCK_FILE)
+    except Exception:
+        pass
+
+
+def cleanup_stale_pid_lock(lock_path: str):
+    """پاکسازی lock فایل در صورت stale بودن PID"""
+    try:
+        if not os.path.exists(lock_path):
+            return
+        with open(lock_path, "r", encoding="utf-8") as f:
+            raw = (f.read() or "0").strip()
+        pid = int(raw) if raw else 0
+        if pid <= 0 or not _pid_alive(pid):
+            os.remove(lock_path)
+            print(f"ℹ️ lock stale حذف شد: {lock_path}")
+    except Exception as e:
+        print(f"⚠️ خطا در پاکسازی lock فایل {lock_path}: {e}")
+
+
+def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
+    """بررسی اینکه آیا پورتی قبلاً توسط سرویس دیگری اشغال شده است"""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def terminate_aux_processes():
+    """پایان دادن به سرویس‌های فرعی که توسط bot.py اجرا شده‌اند"""
+    for proc in aux_processes:
+        try:
+            if proc and proc.poll() is None:
+                proc.terminate()
+        except Exception:
+            pass
+
+
+def start_aux_services():
+    """
+    اجرای پنل وب و worker با یک دستور bot.py
+    - اگر پنل وب روی پورت 5000 بالا باشد، دوباره اجرا نمی‌شود.
+    - worker در حالت duplicate خودش جلوگیری می‌کند (.worker.lock)
+    """
+    global aux_processes
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    py_exe = sys.executable
+
+    # پنل وب
+    if is_port_open("127.0.0.1", 5000):
+        print("ℹ️ پنل وب از قبل روی پورت 5000 فعال است.")
+    else:
+        try:
+            web_proc = subprocess.Popen(
+                [py_exe, "web_app.py"],
+                cwd=base_dir,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+            )
+            aux_processes.append(web_proc)
+            print(f"✅ پنل وب اجرا شد (pid={web_proc.pid})")
+        except Exception as e:
+            print(f"❌ خطا در اجرای پنل وب: {e}")
+
+    # worker
+    try:
+        worker_lock = os.path.join(base_dir, ".worker.lock")
+        cleanup_stale_pid_lock(worker_lock)
+
+        worker_proc = subprocess.Popen(
+            [py_exe, "worker.py"],
+            cwd=base_dir,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+        )
+        time.sleep(0.8)
+        if worker_proc.poll() is None:
+            aux_processes.append(worker_proc)
+            print(f"✅ worker اجرا شد (pid={worker_proc.pid})")
+        else:
+            # یک بار تلاش مجدد: ممکن است lock قبلی خراب بوده باشد
+            cleanup_stale_pid_lock(worker_lock)
+            retry_proc = subprocess.Popen(
+                [py_exe, "worker.py"],
+                cwd=base_dir,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+            )
+            time.sleep(0.8)
+            if retry_proc.poll() is None:
+                aux_processes.append(retry_proc)
+                print(f"✅ worker (retry) اجرا شد (pid={retry_proc.pid})")
+            else:
+                print("❌ worker بعد از retry هم بالا نیامد.")
+    except Exception as e:
+        print(f"❌ خطا در اجرای worker: {e}")
+
+
 async def bot_send_message(chat_id, text, **kwargs):
     """ارسال پیام با retry mechanism برای مدیریت خطاهای timeout"""
+    # ثبت لاگ پیام‌های ارسالی برای نمایش در پنل وب
+    try:
+        log_path = "web_message_logs.json"
+        logs = []
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, "r", encoding="utf-8") as f:
+                    logs = json.load(f)
+                if not isinstance(logs, list):
+                    logs = []
+            except Exception:
+                logs = []
+
+        msg = str(text or "").replace("\x00", "").strip()
+        logs.append(
+            {
+                "ts": now_tehran().strftime("%Y-%m-%d %H:%M:%S"),
+                "chat_id": int(chat_id) if chat_id is not None else None,
+                "text": msg,
+            }
+        )
+        # فقط لاگ‌های جدید نگه داشته شوند
+        logs = logs[-300:]
+        tmp_path = log_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(logs, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, log_path)
+    except Exception:
+        pass
+
     bot = get_bot()
     if bot is None:
         print("⚠️ Bot instance not available yet for sending messages.")
@@ -411,6 +640,10 @@ except Exception as e:
     print(e)
 try:
     curd.cTable_tokens()
+except Exception as e:
+    print(e)
+try:
+    curd.cTable_web_commands()
 except Exception as e:
     print(e)
 
@@ -657,6 +890,9 @@ def format_admin_menu(chat_id):
         [
             InlineKeyboardButton('⚙️ تنظیمات ربات', callback_data='settings_menu'),
             InlineKeyboardButton('🔧 عملیات پیشرفته', callback_data='advanced_menu')
+        ],
+        [
+            InlineKeyboardButton('🔍 جستجو در دیوار', callback_data='search_menu')
         ]
     ]
 
@@ -778,6 +1014,85 @@ async def report_ads_by_status(chatid, heading, empty_text, fetch_func):
             parse_mode='HTML',
             disable_web_page_preview=False
         )
+
+
+async def search_divar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """جستجوی آگهی‌ها در دیوار با استفاده از لاگین ربات"""
+    chatid = update.effective_chat.id
+    args = context.args if context.args else []
+    
+    if not args:
+        await bot_send_message(
+            chat_id=chatid,
+            text="⚠️ لطفاً کلمه کلیدی جستجو را وارد کنید.\n\nمثال:\n/search گرمابسرد\n/search گرمابسرد تهران"
+        )
+        return
+    
+    query = " ".join(args)
+    # اگر آخرین آرگومان یک شهر باشد (مثل "تهران")، آن را جدا کنیم
+    city = "tehran-province"  # پیش‌فرض
+    city_keywords = {
+        "تهران": "tehran-province",
+        "مشهد": "mashhad",
+        "کرج": "karaj",
+        "شیراز": "shiraz",
+        "اصفهان": "isfahan"
+    }
+    
+    query_parts = query.split()
+    if len(query_parts) > 1 and query_parts[-1] in city_keywords:
+        city = city_keywords[query_parts[-1]]
+        query = " ".join(query_parts[:-1])
+    
+    # انتخاب یک لاگین فعال
+    logins = curd.getLogins(chatid=chatid)
+    if not logins or logins == 0:
+        await bot_send_message(chat_id=chatid, text="⚠️ هیچ لاگین فعالی موجود نیست.")
+        return
+    
+    active_login = next((l for l in logins if l[2] == 1), logins[0])
+    
+    try:
+        await bot_send_message(chat_id=chatid, text=f"🔍 در حال جستجوی '{query}' در {city}...")
+        
+        nardeban_api = nardeban(apiKey=active_login[1])
+        ok, msg, results = await asyncio.to_thread(nardeban_api.search_posts, query, city, 0)
+        
+        if not ok:
+            await bot_send_message(chat_id=chatid, text=f"❌ خطا در جستجو: {msg}")
+            return
+        
+        if not results:
+            await bot_send_message(chat_id=chatid, text=f"⚠️ هیچ نتیجه‌ای برای '{query}' یافت نشد.")
+            return
+        
+        # نمایش نتایج
+        lines = [f"🔍 <b>نتایج جستجو برای '{html.escape(query)}':</b>", ""]
+        
+        for idx, result in enumerate(results[:20], 1):  # حداکثر 20 نتیجه
+            token = result.get("token", "")
+            title = html.escape(result.get("title", "بدون عنوان"))
+            district = html.escape(result.get("district", ""))
+            price = html.escape(result.get("price", ""))
+            
+            line = f"{idx}. <b>{title}</b>"
+            if district:
+                line += f"\n   📍 {district}"
+            if price:
+                line += f"\n   💰 {price}"
+            if token:
+                line += f"\n   🔑 <code>{token}</code>"
+            lines.append(line)
+            lines.append("")
+        
+        if len(results) > 20:
+            lines.append(f"   • ... {len(results) - 20} نتیجه دیگر")
+        
+        message = "\n".join(lines)
+        await bot_send_message(chat_id=chatid, text=message, parse_mode='HTML')
+        
+    except Exception as e:
+        await bot_send_message(chat_id=chatid, text=f"❌ خطا در جستجو: {str(e)}")
 
 
 async def report_ads_needing_renewal(chatid):
@@ -1120,11 +1435,9 @@ async def setup_auto_start_job(chatid, start_hour, start_minute=0):
         # دریافت روزهای فعال هفته
         active_weekdays_iran = get_active_weekdays_from_config()
         
-        # تبدیل از فرمت ایرانی به APScheduler
-        # APScheduler: 0=Monday, 1=Tuesday, ..., 6=Sunday
-        # ایران: 0=شنبه, 1=یکشنبه, ..., 6=جمعه
-        # تبدیل: apscheduler_day = (iran_day + 2) % 7
-        active_weekdays_apscheduler = [(day + 2) % 7 for day in active_weekdays_iran]
+        # تبدیل از فرمت ایرانی به APScheduler (۰=دوشنبه … ۶=یکشنبه در کران)
+        active_weekdays_apscheduler = [iran_weekday_to_apscheduler_cron_dow(day) for day in active_weekdays_iran]
+        day_of_week_expr = ",".join(str(d) for d in sorted(active_weekdays_apscheduler))
         
         # اضافه کردن job جدید برای شروع خودکار
         job_id = f"auto_start_{chatid}"
@@ -1137,6 +1450,7 @@ async def setup_auto_start_job(chatid, start_hour, start_minute=0):
                 args=[chatid],
                 hour=start_hour,
                 minute=start_minute,
+                timezone=TEHRAN_TZ,
                 id=job_id,
                 replace_existing=True
             )
@@ -1147,7 +1461,8 @@ async def setup_auto_start_job(chatid, start_hour, start_minute=0):
                 args=[chatid],
                 hour=start_hour,
                 minute=start_minute,
-                day_of_week=active_weekdays_apscheduler,
+                day_of_week=day_of_week_expr,
+                timezone=TEHRAN_TZ,
                 id=job_id,
                 replace_existing=True
             )
@@ -1176,8 +1491,48 @@ async def mainMenu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔍 [mainMenu] نتیجه isAdmin: {is_admin_result}")
         
         if is_admin_result:
-            status = curd.getStatus(chatid=chatid) #0:slogin , 1:slimit, 2:scode
+            status = curd.getStatus(chatid=chatid)  # 0:slogin , 1:slimit, 2:scode
             print(f"🔍 [mainMenu] status: slogin={status[0]}, slimit={status[1]}, scode={status[2]}")
+
+            # وضعیت اختصاصی جستجو در دیوار را از ستون ssearch می‌خوانیم
+            try:
+                search_status = curd.getStatusByQ("ssearch", chatid)
+            except Exception as e:
+                print(f"⚠️ [mainMenu] خطا در خواندن ssearch برای کاربر {chatid}: {e}")
+                search_status = 0
+
+            # اگر در حالت «انتظار برای کلمه جستجو» هستیم
+            if search_status == 1:
+                query_text = user.text.strip()
+                if not query_text:
+                    await context.bot.send_message(
+                        chat_id=chatid,
+                        text="⚠️ لطفاً کلمه کلیدی جستجو را وارد کنید.",
+                        reply_to_message_id=user.message_id,
+                    )
+                    return
+
+                # ریست حالت جستجو
+                curd.setStatus(q="ssearch", v=0, chatid=chatid)
+
+                # تنظیم context.args بر اساس متنی که کاربر فرستاده
+                # تا تابع search_divar بتواند همان منطق /search را استفاده کند
+                try:
+                    context.args = query_text.split()
+                except Exception:
+                    # اگر به هر دلیل ست کردن args ممکن نشد، فقط ادامه می‌دهیم
+                    pass
+
+                # انجام جستجو
+                try:
+                    await search_divar(update, context)
+                except Exception as e:
+                    await context.bot.send_message(
+                        chat_id=chatid,
+                        text=f"❌ خطا در جستجو: {str(e)}",
+                        reply_to_message_id=user.message_id,
+                    )
+                return
             
             # بررسی اینکه آیا باید فاصله بین نردبان‌ها را تنظیم کنیم
             # استفاده از یک flag جدید در adminp برای sinterval
@@ -1719,6 +2074,18 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='HTML'
             )
         
+        elif data == "search_menu":
+            await qry.answer()
+            # تنظیم status برای دریافت کلمه کلیدی جستجو (ستون ssearch در جدول adminp)
+            curd.setStatus(q="ssearch", v=1, chatid=chatid)
+            await context.bot.edit_message_text(
+                chat_id=chatid,
+                message_id=qry.message.message_id,
+                text="🔍 <b>جستجو در دیوار</b>\n\nلطفاً کلمه کلیدی جستجو را ارسال کنید:\n\nمثال:\n• گرمابسرد\n• آپارتمان تهران\n• موبایل\n\n💡 می‌توانید نام شهر را هم در انتها اضافه کنید (تهران، مشهد، کرج، ...)",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔙 بازگشت به منو اصلی', callback_data='backToMenu')]])
+            )
+        
         elif data == "advanced_menu":
             await qry.answer()
             advanced_buttons = [
@@ -2088,6 +2455,30 @@ async def qrycall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         scheduler.remove_job(stop_job_id)
                     except:
                         pass  # اگر job توقف وجود نداشت، مشکلی نیست
+
+                    # حذف همه jobهای توقف خودکار مربوط به این چت
+                    try:
+                        for j in scheduler.get_jobs():
+                            jid = str(getattr(j, "id", "") or "")
+                            if jid.startswith(f"auto_stop_{chatid}"):
+                                scheduler.remove_job(jid)
+                    except Exception:
+                        pass
+
+                    # پاکسازی jobهای باقیمانده sendNardeban برای این چت
+                    try:
+                        for j in scheduler.get_jobs():
+                            try:
+                                j_args = list(getattr(j, "args", []) or [])
+                                if not j_args or int(j_args[0]) != int(chatid):
+                                    continue
+                                func_ref = str(getattr(j, "func_ref", "") or "")
+                                if "sendNardeban" in func_ref:
+                                    scheduler.remove_job(j.id)
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
                     
                     curd.removeJob(chatid=chatid)
                     refreshUsed(chatid=chatid)
@@ -2324,6 +2715,8 @@ async def startNardebanDasti(chatid, end: int):
     
     if nardeban_type == 4:
         await bot_send_message(chat_id=chatid, text="🎢 نوع نردبان: جریان طبیعی - زمان‌بندی نامنظم فعال است.")
+        # marker برای جلوگیری از شروع تکراری در نوع 4
+        curd.addJob(chatid=chatid, job=f"natural_{chatid}")
         
         # برای نوع 4، یک job توقف خودکار تنظیم می‌کنیم (بدون job interval)
         # اما باید job_id را از دیتابیس بگیریم یا یک ID موقت بسازیم
@@ -2340,7 +2733,8 @@ async def startNardebanDasti(chatid, end: int):
         
         # دریافت روزهای فعال هفته
         active_weekdays_iran = get_active_weekdays_from_config()
-        active_weekdays_apscheduler = [(day + 2) % 7 for day in active_weekdays_iran]
+        active_weekdays_apscheduler = [iran_weekday_to_apscheduler_cron_dow(day) for day in active_weekdays_iran]
+        day_of_week_expr = ",".join(str(d) for d in sorted(active_weekdays_apscheduler))
         
         async def stop_natural_flow(chatid):
             """تابع برای توقف جریان طبیعی"""
@@ -2353,6 +2747,7 @@ async def startNardebanDasti(chatid, end: int):
                 args=[chatid],
                 hour=final_stop_hour,
                 minute=final_stop_minute,
+                timezone=TEHRAN_TZ,
                 id=stop_job_id,
                 replace_existing=True
             )
@@ -2363,7 +2758,8 @@ async def startNardebanDasti(chatid, end: int):
                 args=[chatid],
                 hour=final_stop_hour,
                 minute=final_stop_minute,
-                day_of_week=active_weekdays_apscheduler,
+                day_of_week=day_of_week_expr,
+                timezone=TEHRAN_TZ,
                 id=stop_job_id,
                 replace_existing=True
             )
@@ -2382,7 +2778,8 @@ async def startNardebanDasti(chatid, end: int):
         
         # دریافت روزهای فعال هفته برای job توقف (باید در همان روزهایی که شروع فعال است، توقف هم فعال باشد)
         active_weekdays_iran = get_active_weekdays_from_config()
-        active_weekdays_apscheduler = [(day + 2) % 7 for day in active_weekdays_iran]
+        active_weekdays_apscheduler = [iran_weekday_to_apscheduler_cron_dow(day) for day in active_weekdays_iran]
+        day_of_week_expr = ",".join(str(d) for d in sorted(active_weekdays_apscheduler))
         
         # اگر همه روزها فعال هستند، day_of_week را تنظیم نکنیم
         if len(active_weekdays_apscheduler) == 7:
@@ -2392,6 +2789,7 @@ async def startNardebanDasti(chatid, end: int):
                 args=[scheduler, job.id, chatid],
                 hour=final_stop_hour,
                 minute=final_stop_minute,
+                timezone=TEHRAN_TZ,
                 id=stop_job_id,
                 replace_existing=True
             )
@@ -2403,7 +2801,8 @@ async def startNardebanDasti(chatid, end: int):
                 args=[scheduler, job.id, chatid],
                 hour=final_stop_hour,
                 minute=final_stop_minute,
-                day_of_week=active_weekdays_apscheduler,
+                day_of_week=day_of_week_expr,
+                timezone=TEHRAN_TZ,
                 id=stop_job_id,
                 replace_existing=True
             )
@@ -2661,6 +3060,12 @@ async def auto_reset_and_extract_if_all_done(chatid):
 
 async def sendNardeban(chatid):
     try:
+        # اگر job اصلی نردبان برای این کاربر حذف شده باشد، اجرای فرعی/مانده را متوقف کن
+        # این حالت مخصوصاً برای نردبان نوع 4 مهم است که jobهای date جانبی ایجاد می‌کند.
+        current_job_id = curd.getJob(chatid=chatid)
+        if not current_job_id:
+            return
+
         logins = curd.getCookies(chatid=chatid)  # 0 : Phone , 1:Cookie , 2 : used
         manageDetails = curd.getManage(chatid=chatid)
         if not manageDetails or manageDetails[0] != 1:
@@ -2969,8 +3374,36 @@ async def remJob(sch, id, chatid):
             sch.remove_job(stop_job_id)
         except:
             pass  # اگر job توقف وجود نداشت، مشکلی نیست
+
+        # حذف همه auto_stopهای مرتبط با چت (نوع 4 و jobهای مانده)
+        try:
+            for j in sch.get_jobs():
+                jid = str(getattr(j, "id", "") or "")
+                if jid.startswith(f"auto_stop_{chatid}"):
+                    sch.remove_job(jid)
+        except Exception:
+            pass
         
         curd.removeJob(chatid=chatid)
+
+        # پاکسازی jobهای باقیمانده sendNardeban برای این چت (به‌خصوص date jobs نوع 4)
+        try:
+            all_jobs = sch.get_jobs()
+            for j in all_jobs:
+                try:
+                    j_args = list(getattr(j, "args", []) or [])
+                    if not j_args:
+                        continue
+                    if int(j_args[0]) != int(chatid):
+                        continue
+                    func_ref = str(getattr(j, "func_ref", "") or "")
+                    if "sendNardeban" in func_ref:
+                        sch.remove_job(j.id)
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"⚠️ خطا در پاکسازی jobهای باقیمانده نردبان: {e}")
+
         refreshUsed(chatid=chatid)
         
         await bot_send_message(chat_id=chatid, text="✅ عملیات نردبان شما با موفقیت به پایان رسید!")
@@ -3129,8 +3562,10 @@ def build_application():
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('end', shoro))
     application.add_handler(CommandHandler('add', addadmin, filters=filters.User(user_id=Datas.admin)))
+    application.add_handler(CommandHandler('search', search_divar))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mainMenu))
     application.add_handler(CallbackQueryHandler(qrycall))
+    application.add_error_handler(telegram_error_handler)
 
     application.post_init = on_startup
     application.post_shutdown = on_shutdown
@@ -3139,6 +3574,7 @@ def build_application():
 
 async def on_startup(application: Application):
     print("🚀 Application post_init - starting scheduler")
+    update_telegram_status("connected", "تلگرام متصل شد")
     loop = asyncio.get_running_loop()
     scheduler.configure(event_loop=loop)
     if not scheduler.running:
@@ -3164,11 +3600,27 @@ async def on_startup(application: Application):
 
 async def on_shutdown(application: Application):
     print("🛑 Application shutting down - stopping scheduler")
+    update_telegram_status("disconnected", "اتصال تلگرام قطع شد")
     if scheduler.running:
         scheduler.shutdown(wait=False)
 
 
-def main():
+async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """کاهش نویز لاگ خطاهای تلگرام"""
+    err = context.error
+    if isinstance(err, Conflict):
+        print(f"⚠️ Conflict در getUpdates: {err}")
+        update_telegram_status("conflict", str(err))
+        return
+    if isinstance(err, (NetworkError, TimedOut)):
+        print(f"⚠️ خطای شبکه تلگرام: {err}")
+        update_telegram_status("retrying", str(err))
+        return
+    print(f"⚠️ خطای عمومی تلگرام: {err}")
+
+
+def run_telegram_once():
+    update_telegram_status("connecting", "در حال اتصال به تلگرام...")
     print("=" * 50)
     print("🤖 در حال راه‌اندازی ربات تلگرام...")
     print("=" * 50)
@@ -3181,17 +3633,83 @@ def main():
     )
 
 
+def main():
+    """
+    Supervisor برای بخش تلگرام:
+    - در صورت قطعی شبکه/تلگرام، از برنامه خارج نمی‌شود.
+    - با backoff دوباره تلاش می‌کند.
+    - پنل وب و worker در این مدت فعال می‌مانند.
+    """
+    retry_delay = 5
+    max_retry_delay = 60
+    _configure_telegram_poll_log_throttle(90.0)
+
+    while True:
+        try:
+            run_telegram_once()
+            # اگر run_polling بدون خطا برگشت، کمی صبر و دوباره تلاش
+            print("⚠️ run_polling پایان یافت. تلاش مجدد...")
+            time.sleep(2)
+            retry_delay = 5
+        except KeyboardInterrupt:
+            raise
+        except Conflict as e:
+            # وجود instance دیگر از همین bot/token
+            retry_delay = max(retry_delay, 15)
+            update_telegram_status("conflict", str(e))
+            print(f"\n⚠️ Conflict: نمونه دیگری از bot در حال polling است: {e}")
+            print(f"⏳ تلاش مجدد بعد از {retry_delay} ثانیه...")
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max_retry_delay)
+        except (NetworkError, TimedOut) as e:
+            update_telegram_status("retrying", str(e))
+            print(f"\n⚠️ قطعی ارتباط با تلگرام: {e}")
+            print(f"⏳ تلاش مجدد بعد از {retry_delay} ثانیه...")
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max_retry_delay)
+        except Exception as e:
+            # برخی خطاهای شبکه به صورت generic exception بالا می‌آیند
+            err_text = str(e).lower()
+            if "connecterror" in err_text or "timed out" in err_text or "network" in err_text:
+                update_telegram_status("retrying", str(e))
+                print(f"\n⚠️ خطای شبکه در اتصال به تلگرام: {e}")
+                print(f"⏳ تلاش مجدد بعد از {retry_delay} ثانیه...")
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, max_retry_delay)
+                continue
+
+            if "conflict" in err_text and "getupdates" in err_text:
+                retry_delay = max(retry_delay, 15)
+                update_telegram_status("conflict", str(e))
+                print(f"\n⚠️ Conflict در اتصال تلگرام: {e}")
+                print(f"⏳ تلاش مجدد بعد از {retry_delay} ثانیه...")
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, max_retry_delay)
+                continue
+
+            print(f"\n❌ خطای غیرمنتظره در سرویس تلگرام: {e}")
+            import traceback
+            traceback.print_exc()
+            update_telegram_status("error", str(e))
+            print(f"⏳ تلاش مجدد بعد از {retry_delay} ثانیه...")
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max_retry_delay)
+
+
 if __name__ == '__main__':
+    if not acquire_bot_lock():
+        raise SystemExit(0)
     try:
+        # اجرای کامل سیستم با یک دستور:
+        # 1) پنل وب  2) worker  3) ربات تلگرام
+        start_aux_services()
+        atexit.register(terminate_aux_processes)
+        atexit.register(release_bot_lock)
         main()
     except KeyboardInterrupt:
         print("\n⚠️ ربات توسط کاربر متوقف شد.")
+        terminate_aux_processes()
+        release_bot_lock()
         sys.exit(0)
-    except Exception as e:
-        print(f"\n❌ خطا در اتصال به تلگرام: {e}")
-        print("لطفاً موارد زیر را بررسی کنید:")
-        print("  1. اتصال اینترنت")
-        print("  2. صحت token ربات در فایل configs.json")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    finally:
+        release_bot_lock()

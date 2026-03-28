@@ -19,15 +19,48 @@ class api:
     
     def login(self, phone: str):
         url = "https://api.divar.ir/v5/auth/authenticate"
-        data = {"phone": phone}
-        sendCode = requests.post(url=url, headers=self.headers, json=data)
-        return sendCode.json()
+        data = {"phone": str(phone).strip()}
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url=url, headers=self.headers, json=data, timeout=25)
+                try:
+                    body = response.json()
+                except Exception:
+                    body = {"error": f"invalid json response: {response.text[:200]}"}
+                # در پاسخ خطا، status code را نیز برگردان
+                if response.status_code >= 400 and isinstance(body, dict):
+                    body.setdefault("http_status", response.status_code)
+                return body
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    time.sleep(1.5)
+                    continue
+                return {"error": "timeout while sending OTP"}
+            except requests.exceptions.RequestException as e:
+                return {"error": f"request failed: {str(e)}"}
 
     def verifyOtp(self, phone: str, code: str):
         url = "https://api.divar.ir/v5/auth/confirm"
-        data = {"phone": str(phone), "code": code}
-        confirm = requests.post(url=url, headers=self.headers, json=data)
-        return confirm.json()  # token is : {'token':''}
+        data = {"phone": str(phone).strip(), "code": str(code).strip()}
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url=url, headers=self.headers, json=data, timeout=25)
+                try:
+                    body = response.json()
+                except Exception:
+                    body = {"error": f"invalid json response: {response.text[:200]}"}
+                if response.status_code >= 400 and isinstance(body, dict):
+                    body.setdefault("http_status", response.status_code)
+                return body  # token is : {'token':''}
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    time.sleep(1.5)
+                    continue
+                return {"error": "timeout while verifying OTP"}
+            except requests.exceptions.RequestException as e:
+                return {"error": f"request failed: {str(e)}"}
 
 class nardeban:
     def __init__(self,apiKey):
@@ -597,3 +630,64 @@ class nardeban:
                                 # فقط در صورت موفقیت کامل، توکن را به عنوان success ذخیره می‌کنیم
                                 self.curd.addSent(token=token, chatid=chatid, status="success")
                                 return [1, token, number]
+
+    def search_posts(self, query, city="tehran-province", page=0):
+        """
+        جستجوی آگهی‌ها در دیوار با استفاده از کوکی لاگین شده
+        Args:
+            query: کلمه کلیدی جستجو
+            city: شهر یا استان (پیش‌فرض: tehran-province)
+            page: شماره صفحه (پیش‌فرض: 0)
+        Returns:
+            (success: bool, message: str, results: list)
+        """
+        try:
+            # استفاده از API جستجوی دیوار
+            url = f"https://api.divar.ir/v8/web-search/{city}"
+            params = {
+                "q": query,
+                "page": page
+            }
+            
+            response = requests.get(
+                url,
+                headers=self.headers,
+                cookies=self.cookies,
+                params=params,
+                timeout=20
+            )
+            
+            if response.status_code != 200:
+                return False, f"HTTP {response.status_code}", []
+            
+            try:
+                data = response.json()
+            except Exception as e:
+                return False, f"JSON error: {e}", []
+            
+            # استخراج نتایج از پاسخ
+            results = []
+            widget_list = data.get("web_widgets", [])
+            
+            for widget in widget_list:
+                if widget.get("widget_type") == "POST_ROW":
+                    widget_data = widget.get("data", {})
+                    token = widget.get("token") or widget_data.get("token")
+                    title = widget_data.get("title", "")
+                    district = widget_data.get("district", "")
+                    price = widget_data.get("price", "")
+                    image_url = widget_data.get("image_url", "")
+                    
+                    if token:
+                        results.append({
+                            "token": token,
+                            "title": title,
+                            "district": district,
+                            "price": price,
+                            "image_url": image_url
+                        })
+            
+            return True, "ok", results
+            
+        except Exception as e:
+            return False, str(e), []
