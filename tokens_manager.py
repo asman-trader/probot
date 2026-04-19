@@ -7,6 +7,7 @@
 import json
 import os
 import threading
+import copy
 from datetime import datetime, timedelta
 
 TOKENS_JSON_FILE = "tokens.json"
@@ -16,13 +17,81 @@ _tokens_cache = {}
 _cache_lock = threading.Lock()
 _cache_last_modified = None
 _cache_ttl = timedelta(seconds=5)  # Cache برای 5 ثانیه معتبر است
+_STATUS_ORDER = ("pending", "success", "failed")
+_STATUS_PRIORITY = {"pending": 1, "failed": 2, "success": 3}
+
+
+def _deepcopy_tokens_data(tokens_data):
+    """کپی عمیق امن از داده‌های توکن"""
+    return copy.deepcopy(tokens_data)
+
+
+def _write_json_file(data):
+    """نوشتن اتمیک JSON برای کاهش ریسک خراب شدن فایل"""
+    temp_file = f"{TOKENS_JSON_FILE}.tmp"
+    with open(temp_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(temp_file, TOKENS_JSON_FILE)
+
+
+def _normalize_tokens_data(tokens_data):
+    """
+    نرمال‌سازی داده‌ها:
+    - هر توکن در هر chatid فقط یک‌بار ذخیره شود.
+    - اولویت وضعیت: success > failed > pending
+    - حذف تکراری‌ها داخل هر لیست.
+    """
+    normalized = {}
+    changed = False
+
+    for chatid, phones in tokens_data.items():
+        normalized[chatid] = {}
+        token_owner = {}  # token -> (phone, status)
+
+        # مرحله 1: انتخاب مالک نهایی هر توکن با توجه به اولویت وضعیت
+        for phone in sorted(phones.keys(), key=lambda x: str(x)):
+            status_dict = phones.get(phone, {})
+            if not isinstance(status_dict, dict):
+                status_dict = {"pending": status_dict if isinstance(status_dict, list) else [], "success": [], "failed": []}
+                changed = True
+
+            for status in _STATUS_ORDER:
+                seen_local = set()
+                for token in status_dict.get(status, []):
+                    if not token or token in seen_local:
+                        changed = True
+                        continue
+                    seen_local.add(token)
+
+                    if token not in token_owner:
+                        token_owner[token] = (phone, status)
+                    else:
+                        prev_phone, prev_status = token_owner[token]
+                        prev_priority = _STATUS_PRIORITY.get(prev_status, 0)
+                        cur_priority = _STATUS_PRIORITY.get(status, 0)
+                        if cur_priority > prev_priority:
+                            token_owner[token] = (phone, status)
+                            changed = True
+                        elif cur_priority == prev_priority and prev_phone != phone:
+                            # در وضعیت هم‌اولویت، اولین مالک حفظ می‌شود
+                            changed = True
+
+        # مرحله 2: بازسازی ساختار نهایی بدون تداخل
+        for phone in phones.keys():
+            normalized[chatid][phone] = {"pending": [], "success": [], "failed": []}
+
+        for token, (phone, status) in token_owner.items():
+            if phone not in normalized[chatid]:
+                normalized[chatid][phone] = {"pending": [], "success": [], "failed": []}
+            normalized[chatid][phone][status].append(token)
+
+    return normalized, changed
 
 def _create_empty_json_file():
     """ایجاد فایل JSON خالی"""
     try:
         data = {}
-        with open(TOKENS_JSON_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        _write_json_file(data)
         print(f"✅ فایل {TOKENS_JSON_FILE} ایجاد شد.")
         return True
     except Exception as e:
@@ -78,7 +147,7 @@ def load_tokens_json(force_reload=False):
                 
                 # اگر cache معتبر است و فایل تغییر نکرده
                 if datetime.now() - _cache_last_modified < _cache_ttl and file_modified <= _cache_last_modified:
-                    return _tokens_cache.copy()  # برگرداندن کپی برای جلوگیری از تغییر cache
+                    return _deepcopy_tokens_data(_tokens_cache)  # برگرداندن کپی عمیق برای جلوگیری از تغییر cache
             except:
                 pass  # در صورت خطا، از دیسک بخوان
         
@@ -99,12 +168,21 @@ def load_tokens_json(force_reload=False):
                     
                     # تبدیل ساختار قدیمی به جدید (اگر لازم باشد)
                     result = _migrate_old_format_to_new(result)
+                    # نرمال‌سازی برای جلوگیری از تداخل وضعیت‌ها/تکراری‌ها
+                    result, changed = _normalize_tokens_data(result)
+                    if changed:
+                        # ذخیرهٔ خودکار نسخهٔ نرمال‌شده روی دیسک
+                        serializable = {
+                            str(cid): {str(ph): sd for ph, sd in phones.items()}
+                            for cid, phones in result.items()
+                        }
+                        _write_json_file(serializable)
                     
                     # به‌روزرسانی cache
                     _tokens_cache = result
                     _cache_last_modified = datetime.now()
                     
-                    return result.copy()  # برگرداندن کپی
+                    return _deepcopy_tokens_data(result)  # برگرداندن کپی عمیق
             else:
                 # اگر فایل وجود ندارد، یک فایل خالی ایجاد کن
                 print(f"ℹ️ فایل {TOKENS_JSON_FILE} وجود ندارد. فایل خالی ایجاد می‌شود.")
@@ -128,6 +206,9 @@ def save_tokens_json(tokens_data):
     
     with _cache_lock:
         try:
+            # نرمال‌سازی برای جلوگیری از تداخل وضعیت‌ها قبل از ذخیره
+            tokens_data, _ = _normalize_tokens_data(tokens_data)
+
             # تبدیل کلیدهای int به string برای JSON
             data = {}
             for chatid, phones in tokens_data.items():
@@ -140,11 +221,10 @@ def save_tokens_json(tokens_data):
                 data = {}
             
             # ایجاد فایل JSON (حتی اگر خالی باشد) - اگر وجود نداشت، خودکار ایجاد می‌شود
-            with open(TOKENS_JSON_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            _write_json_file(data)
             
             # به‌روزرسانی cache
-            _tokens_cache = tokens_data.copy()
+            _tokens_cache = _deepcopy_tokens_data(tokens_data)
             _cache_last_modified = datetime.now()
             
             # بررسی اینکه فایل واقعاً ایجاد شده است
@@ -363,17 +443,60 @@ def get_token_stats(chatid, phone=None):
     
     return stats
 
+def reset_tokens_for_phone(chatid, phone):
+    """
+    حذف تمام توکن‌های یک شماره برای یک chatid از JSON.
+    خروجی: (موفقیت، لیست توکن‌های حذف‌شده) برای پاک‌سازی جدول sents و غیره.
+    """
+    removed_tokens = []
+    try:
+        try:
+            chatid = int(chatid)
+            phone = int(phone)
+        except (TypeError, ValueError):
+            return False, removed_tokens
+
+        tokens_data = load_tokens_json()
+        if chatid not in tokens_data or phone not in tokens_data[chatid]:
+            return True, removed_tokens
+
+        status_dict = tokens_data[chatid][phone]
+        if isinstance(status_dict, dict):
+            for key in ("pending", "success", "failed"):
+                removed_tokens.extend(status_dict.get(key, []))
+        elif isinstance(status_dict, list):
+            removed_tokens.extend(status_dict)
+
+        del tokens_data[chatid][phone]
+        if not tokens_data[chatid]:
+            del tokens_data[chatid]
+
+        save_tokens_json(tokens_data)
+        print(f"♻️ توکن‌های chatid={chatid} phone={phone} از JSON حذف شد ({len(removed_tokens)} توکن).")
+        return True, removed_tokens
+    except Exception as e:
+        print(f"❌ خطا در reset_tokens_for_phone chatid={chatid} phone={phone}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, removed_tokens
+
+
 def reset_tokens_for_chat(chatid):
     """حذف کامل تمام توکن‌های مربوط به یک chatid از فایل JSON"""
     try:
+        try:
+            chatid = int(chatid)
+        except (TypeError, ValueError):
+            pass
         tokens_data = load_tokens_json()
         if chatid in tokens_data:
             del tokens_data[chatid]
             save_tokens_json(tokens_data)
             print(f"♻️ تمام توکن‌های chatid={chatid} از JSON حذف شد.")
             return True
-        print(f"ℹ️ توکنی برای chatid={chatid} در JSON یافت نشد.")
-        return False
+        # بدون داده هم «ریست موفق» — جلوگیری از گیر کردن auto_reset در حالت JSON خالی/هم‌زمان
+        print(f"ℹ️ توکنی برای chatid={chatid} در JSON یافت نشد (ریست بدون تغییر).")
+        return True
     except Exception as e:
         print(f"❌ خطا در reset_tokens_for_chat برای chatid={chatid}: {e}")
         import traceback

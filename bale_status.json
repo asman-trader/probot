@@ -1,0 +1,5 @@
+{
+  "state": "retrying",
+  "detail": "httpx.ConnectError: [Errno 11001] getaddrinfo failed",
+  "updated_at": "2026-04-18T11:05:46.614486+03:30"
+}

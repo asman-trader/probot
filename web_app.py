@@ -1,4 +1,3 @@
-import hashlib
 import io
 import json
 import os
@@ -30,8 +29,9 @@ curd.cTable_admins()
 curd.cTable_jobs()
 curd.cTable_tokens()
 curd.cTable_web_commands()
+curd.cTable_web_panel_auth()
 
-CHAT_ID = int(Datas.admin) if Datas.admin is not None else 0
+DEFAULT_ADMIN_ID = int(Datas.admin) if Datas.admin is not None else 0
 divar_api = DivarApi()
 
 app = Flask(__name__)
@@ -59,26 +59,32 @@ def _save_raw_config(config):
         json.dump(config, f, ensure_ascii=False, indent=2)
 
 
-def _load_telegram_status():
+def _load_bale_status():
     try:
-        with open("telegram_status.json", "r", encoding="utf-8") as f:
+        with open("bale_status.json", "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {"state": "unknown", "detail": "وضعیت هنوز ثبت نشده", "updated_at": "-"}
+        return {"state": "unknown", "detail": "بله غیرفعال یا هنوز ثبت نشده", "updated_at": "-"}
 
 
-def _load_web_message_logs(limit=30):
+def _load_web_message_logs(limit=30, panel_chatid=None):
     try:
         with open("web_message_logs.json", "r", encoding="utf-8") as f:
             rows = json.load(f)
         if not isinstance(rows, list):
             return []
-        # جدیدترین بالا
-        rows = rows[-limit:][::-1]
+        rows = rows[-800:][::-1]
         cleaned = []
         for r in rows:
             if not isinstance(r, dict):
                 continue
+            if panel_chatid is not None:
+                try:
+                    cid = r.get("chat_id")
+                    if cid is None or int(cid) != int(panel_chatid):
+                        continue
+                except (TypeError, ValueError):
+                    continue
             raw_text = str(r.get("text", "")).replace("\x00", "").strip()
             cleaned.append(
                 {
@@ -86,35 +92,25 @@ def _load_web_message_logs(limit=30):
                     "text": raw_text or "-",
                 }
             )
+            if len(cleaned) >= limit:
+                break
         return cleaned
     except Exception:
         return []
 
 
-def _verify_web_password(raw_password: str):
-    cfg = _load_raw_config()
-    expected = str(cfg.get("web_password", "")).strip()
-    if not expected:
-        return False
-    # supports "sha256:<digest>" and plain text
-    if expected.startswith("sha256:"):
-        digest = hashlib.sha256(raw_password.encode("utf-8")).hexdigest()
-        return expected == f"sha256:{digest}"
-    return raw_password == expected
-
-
-def _ensure_web_password():
-    cfg = _load_raw_config()
-    if str(cfg.get("web_password", "")).strip():
-        return
-    cfg["web_password"] = "admin12345"
-    _save_raw_config(cfg)
+def _panel_chatid() -> int:
+    """شناسهٔ چت ادمین جاری در پنل (همان chatid ربات بله)."""
+    try:
+        return int(session.get("panel_chatid", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if not session.get("web_auth"):
+        if not session.get("web_auth") or _panel_chatid() <= 0:
             return redirect(url_for("login"), code=303)
         return fn(*args, **kwargs)
 
@@ -123,7 +119,7 @@ def login_required(fn):
 
 def _enqueue_command(command_type, payload=None):
     payload_json = json.dumps(payload or {}, ensure_ascii=False)
-    return curd.addWebCommand(chatid=CHAT_ID, command_type=command_type, payload_json=payload_json)
+    return curd.addWebCommand(chatid=_panel_chatid(), command_type=command_type, payload_json=payload_json)
 
 
 def _normalize_phone(raw_phone: str):
@@ -150,7 +146,7 @@ def _normalize_phone(raw_phone: str):
 
 
 def _admin_rows_for_panel():
-    """همان منطق نمایش تلگرام: ادمین پیش‌فرض اول، بقیه از جدول admins."""
+    """ادمین پیش‌فرض از configs اول، بقیه از جدول admins."""
     primary = int(Datas.admin) if Datas.admin is not None else None
     db_ids = set()
     for a in curd.getAdmins() or []:
@@ -174,19 +170,26 @@ def _get_nardeban_runtime_status():
     - job فعال ثبت‌شده در جدول jobs
     - فرمان‌های start/stop در صف که هنوز پردازش نشده‌اند
     """
-    job_id = curd.getJob(chatid=CHAT_ID)
+    cid = _panel_chatid()
+    job_id = curd.getJob(chatid=cid)
     active_jobs_count = 1 if job_id else 0
 
     pending_start = 0
     pending_stop = 0
     for row in curd.getPendingWebCommands(limit=100):
+        try:
+            row_chat = int(row[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if row_chat != cid:
+            continue
         command_type = row[2]
         if command_type == "startJob":
             pending_start += 1
         elif command_type == "remJob":
             pending_stop += 1
 
-    start_command_in_flight = curd.has_web_command_in_flight(CHAT_ID, "startJob")
+    start_command_in_flight = curd.has_web_command_in_flight(cid, "startJob")
 
     state_text = "فعال" if active_jobs_count > 0 else "متوقف"
     if pending_stop > 0:
@@ -206,14 +209,29 @@ def _get_nardeban_runtime_status():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    _ensure_web_password()
     if request.method == "POST":
-        password = request.form.get("password", "")
-        if _verify_web_password(password):
-            session["web_auth"] = True
-            flash("ورود موفق بود.", "ok")
-            return redirect(url_for("panel"), code=303)
-        flash("رمز عبور اشتباه است.", "err")
+        phone = _normalize_phone(request.form.get("phone", ""))
+        password = (request.form.get("password") or "").strip()
+        if not phone:
+            flash("شماره موبایل را وارد کنید.", "err")
+        elif not password:
+            flash("رمز پنل را وارد کنید.", "err")
+        else:
+            chatid = curd.find_chatid_by_login_phone(phone)
+            if not chatid:
+                flash("این شماره در لیست لاگین‌های دیوار ثبت نشده است؛ ابتدا از ربات بله همان شماره را اضافه کنید.", "err")
+            elif not curd.verify_web_panel_password(chatid, password):
+                flash(
+                    "رمز اشتباه است یا هنوز رمز دریافت نکرده‌اید. پس از اولین «لاگین جدید» موفق در ربات، رمز پنل برایتان ارسال می‌شود.",
+                    "err",
+                )
+            else:
+                curd.addManage(chatid)
+                session.clear()
+                session["web_auth"] = True
+                session["panel_chatid"] = int(chatid)
+                flash("ورود موفق بود؛ پنل با همان حساب ربات بله شما همگام است.", "ok")
+                return redirect(url_for("panel"), code=303)
 
     html = """
     <!doctype html>
@@ -230,9 +248,10 @@ def login():
         body { font-family: Tahoma, sans-serif; margin:0; padding:max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
         .box { max-width: 420px; width:100%; margin: min(48px, 12vh) auto; background:#0f172a !important; border:1px solid #334155; border-radius:16px; padding:clamp(16px, 4vw, 22px); }
         h2 { margin: 0 0 14px 0; }
-        .muted { color:#94a3b8; font-size:13px; margin-bottom:12px; }
+        .muted { color:#94a3b8; font-size:13px; margin-bottom:12px; line-height:1.55; }
         input,button { width:100%; box-sizing:border-box; padding:12px 14px; min-height:44px; border-radius:10px; border:1px solid #334155; background:#020617 !important; color:#e5e7eb !important; }
-        button { border:0; margin-top:10px; background:#2563eb; color:#fff; font-weight:700; cursor:pointer; touch-action: manipulation; }
+        input { margin-top:8px; }
+        button { border:0; margin-top:14px; background:#2563eb; color:#fff; font-weight:700; cursor:pointer; touch-action: manipulation; }
         .f { margin-top:10px; font-size:13px; padding:8px 10px; border-radius:8px; }
         .ok { background:#ecfdf3; color:#166534; border:1px solid #bbf7d0; }
         .err { background:#fef2f2; color:#991b1b; border:1px solid #fecaca; }
@@ -241,9 +260,12 @@ def login():
     <body>
       <div class="box">
         <h2>🔐 ورود پنل وب</h2>
-        <div class="muted">برای مدیریت کامل ربات (حتی بدون تلگرام) وارد شوید.</div>
+        <div class="muted">
+          همان شماره‌ای که در ربات بله برای دیوار ثبت کرده‌اید و <b>رمز یک‌بار مصرف</b>ی که پس از اولین لاگین جدید موفق در ربات برایتان فرستاده می‌شود.
+        </div>
         <form method="post">
-          <input type="password" name="password" placeholder="رمز عبور پنل" required>
+          <input type="tel" name="phone" inputmode="numeric" autocomplete="username" placeholder="مثال: 09123456789" required>
+          <input type="password" name="password" autocomplete="current-password" placeholder="رمز پنل (از ربات بله)" required>
           <button type="submit">ورود</button>
         </form>
         {% for c,m in msgs %}
@@ -265,15 +287,16 @@ def logout():
 @app.route("/", methods=["GET"])
 @login_required
 def panel():
-    manage = curd.getManage(chatid=CHAT_ID)
-    stats = curd.getStats(chatid=CHAT_ID)
-    logins = curd.getLogins(chatid=CHAT_ID)
+    cid = _panel_chatid()
+    manage = curd.getManage(chatid=cid)
+    stats = curd.getStats(chatid=cid)
+    logins = curd.getLogins(chatid=cid)
     if not logins or logins == 0:
         logins = []
-    recent_commands = curd.getRecentWebCommands(limit=25)
+    recent_commands = curd.getRecentWebCommands(limit=25, chatid=cid)
     cfg = _load_raw_config()
-    tg_status = _load_telegram_status()
-    message_logs = _load_web_message_logs(limit=40)
+    bale_status = _load_bale_status()
+    message_logs = _load_web_message_logs(limit=40, panel_chatid=cid)
     nardeban_runtime = _get_nardeban_runtime_status()
     otp_phone = session.get("otp_phone", "")
     open_otp_for_modal = bool(session.pop("open_otp_modal", False))
@@ -314,7 +337,8 @@ def panel():
         (3, "3️⃣ ترتیبی نوبتی"),
         (4, "🎢 4️⃣ جریان طبیعی"),
     ]
-    admin_panel_rows = _admin_rows_for_panel()
+    admin_panel_rows = _admin_rows_for_panel() if DEFAULT_ADMIN_ID and cid == DEFAULT_ADMIN_ID else []
+    is_primary_panel = bool(DEFAULT_ADMIN_ID and cid == DEFAULT_ADMIN_ID)
 
     html = """
     <!doctype html>
@@ -511,9 +535,9 @@ def panel():
         <div class="top">
           <div class="brand">
             <div class="brand-badge">⚡</div>
-            <div class="brand-text">
+              <div class="brand-text">
               <h2>مرکز کنترل ربات</h2>
-              <div class="sub">مدیریت وب، نردبان و وضعیت سرویس‌ها</div>
+              <div class="sub">شناسهٔ شما در بله: <b>{{ panel_chatid }}</b> · مدیریت وب همگام با همان حساب</div>
               <div class="header-clock" id="header-clock" aria-live="polite" aria-atomic="true">
                 <span class="header-clock-time" id="hdr-time">--:--:--</span>
                 <span class="header-clock-date" id="hdr-date">…</span>
@@ -537,7 +561,7 @@ def panel():
               <button type="submit" class="top-action-btn">شروع نردبان</button>
             </form>
             {% endif %}
-            <span class="pill">تلگرام: {{ tg_status.get("state", "unknown") }}</span>
+            <span class="pill">ربات بله: {{ bale_status.get("state", "unknown") }}</span>
             <a class="btn-link" href="/logout">خروج</a>
           </div>
         </div>
@@ -556,11 +580,15 @@ def panel():
               <button type="button" class="item clickable" onclick="openModal('m-active')"><div class="item-title">وضعیت ربات</div><b>{{ "فعال" if manage[0] == 1 else "غیرفعال" }}</b></button>
               <button type="button" class="item clickable" onclick="openModal('m-type')"><div class="item-title">نوع نردبان</div><b>{{ nardeban_type_name }}</b> <span style="opacity:.85;font-size:13px;">({{ current_nardeban_type }})</span></button>
               <button type="button" class="item clickable" onclick="openModal('m-interval')"><div class="item-title">فاصله</div><b>{{ manage[5] }} دقیقه</b></button>
+              {% if is_primary_panel %}
               <button type="button" class="item clickable" onclick="openModal('m-start')"><div class="item-title">شروع</div><b>{{ cfg.get("start_hour","-") }}:{{ "%02d"|format(cfg.get("start_minute",0)) }}</b></button>
               <button type="button" class="item clickable" onclick="openModal('m-stop')"><div class="item-title">توقف</div><b>{{ cfg.get("stop_hour","-") }}:{{ "%02d"|format(cfg.get("stop_minute",0)) }}</b></button>
               <button type="button" class="item clickable" onclick="openModal('m-repeat')"><div class="item-title">تکرار</div><b>{{ cfg.get("repeat_days", "-") }} روز</b></button>
               <button type="button" class="item clickable" onclick="openModal('m-weekdays')"><div class="item-title">روزهای فعال</div><b>{{ weekdays_text }}</b></button>
-              <div class="item">آخرین بروزرسانی: <b>{{ tg_status.get("updated_at", "-") }}</b></div>
+              {% else %}
+              <div class="item" style="font-size:12px;color:#94a3b8;">ساعت شروع/توقف، تکرار و روزهای هفتهٔ <b>سراسری</b> فقط با حساب ادمین اصلی قابل تغییر است؛ بقیهٔ تنظیمات همان ربات بلهٔ شماست.</div>
+              {% endif %}
+              <div class="item">آخرین بروزرسانی: <b>{{ bale_status.get("updated_at", "-") }}</b></div>
               <div class="item">وضعیت اجرای نردبان: <b>{{ nardeban_runtime.state_text }}</b></div>
               <div class="item">تعداد job فعال نردبان: <b>{{ nardeban_runtime.active_jobs_count }}</b></div>
               <div class="item">شناسه job فعال: <b>{{ nardeban_runtime.job_id }}</b></div>
@@ -631,6 +659,7 @@ def panel():
           </div>
         </details>
 
+        {% if is_primary_panel %}
         <details class="panel-details">
           <summary>
             <span>👥 مدیریت ادمین‌ها <span style="font-weight:400;color:#94a3b8;font-size:13px;">({{ admin_panel_rows|length }} نفر)</span></span>
@@ -638,7 +667,7 @@ def panel():
           </summary>
           <div class="panel-details-inner">
             <div class="item" style="margin-bottom:10px;font-size:12px;color:#94a3b8;line-height:1.45;">
-              ⭐ همان ادمین پیش‌فرض configs است و قابل حذف نیست. 🗣 ادمین‌های اضافه‌شده از تلگرام یا همینجا؛ پس از افزودن، کاربر باید در ربات <b>/start</b> بزند.
+              ⭐ همان ادمین پیش‌فرض configs است و قابل حذف نیست. 🗣 ادمین‌های اضافه‌شده از بله یا همینجا؛ پس از افزودن، کاربر باید در ربات <b>/start</b> بزند.
             </div>
             <div class="table-wrap">
             <table>
@@ -670,6 +699,7 @@ def panel():
             </form>
           </div>
         </details>
+        {% endif %}
 
         <details class="panel-details">
           <summary>
@@ -806,6 +836,7 @@ def panel():
         </div>
       </div>
 
+      {% if is_primary_panel %}
       <div id="m-start" class="modal-backdrop" onclick="closeModal(event, 'm-start')">
         <div class="modal-card">
           <h4 class="modal-title">تنظیم زمان شروع</h4>
@@ -858,6 +889,7 @@ def panel():
           </form>
         </div>
       </div>
+      {% endif %}
 
       <script>
         function openModal(id) {
@@ -957,7 +989,7 @@ def panel():
             login_rows=login_rows,
             recent_commands=recent_commands,
             cfg=cfg,
-            tg_status=tg_status,
+            bale_status=bale_status,
             message_logs=message_logs,
             nardeban_runtime=nardeban_runtime,
             weekdays_text=weekdays_text,
@@ -969,6 +1001,8 @@ def panel():
             nardeban_type_name=nardeban_type_name,
             nardeban_type_options=nardeban_type_options,
             admin_panel_rows=admin_panel_rows,
+            is_primary_panel=is_primary_panel,
+            panel_chatid=cid,
             flashes=get_flashed_messages(with_categories=True),
         )
     )
@@ -1050,14 +1084,26 @@ def otp_confirm():
                 flash(f"OTP ناموفق: {response}", "err")
             return redirect(url_for("panel"), code=303)
 
-        if curd.addLogin(phone=phone, cookie=token, chatid=CHAT_ID) == 0:
-            curd.updateLogin(phone=phone, cookie=token)
+        cid = _panel_chatid()
+        add_rc = curd.addLogin(chatid=cid, phone=phone, cookie=token)
+        if add_rc == 0:
+            curd.updateLogin(phone=phone, cookie=token, chatid=cid)
             flash(
-                f"ورود مجدد دیوار برای {phone} انجام شد؛ کوکی جایگزین شد و می‌توانید دوباره از این اکانت استفاده کنید.",
+                f"ورود مجدد دیوار برای {phone} انجام شد؛ کوکی جایگزین شد و این لاگین فعال است.",
                 "ok",
             )
         else:
-            flash("لاگین جدید ثبت شد (در حال حاضر غیرفعال است).", "ok")
+            if not curd.has_web_panel_password(cid):
+                try:
+                    plain = curd.issue_web_panel_password(cid)
+                    flash(
+                        f"لاگین جدید ثبت شد. رمز ورود پنل وب (با همین شماره): {plain}",
+                        "ok",
+                    )
+                except Exception as e:
+                    flash(f"لاگین ثبت شد اما صدور رمز پنل ناموفق بود: {e}", "err")
+            else:
+                flash("لاگین جدید ثبت شد. برای ورود وب از همان رمز پنلی که قبلاً دریافت کرده‌اید استفاده کنید.", "ok")
         session.pop("otp_phone", None)
         session.pop("open_otp_modal", None)
         session.modified = True
@@ -1089,14 +1135,15 @@ def api_command():
         if value is not None and str(value).strip() != "":
             payload[key] = str(value).strip()
 
+    cid = _panel_chatid()
     if command_type == "startJob":
-        if curd.getJob(chatid=CHAT_ID):
+        if curd.getJob(chatid=cid):
             flash(
                 "یک نردبان از قبل فعال است — مثل تلگرام نمی‌توانید دوباره شروع کنید. ابتدا «توقف نردبان» را بزنید.",
                 "err",
             )
             return redirect(url_for("panel"), code=303)
-        if curd.has_web_command_in_flight(CHAT_ID, "startJob"):
+        if curd.has_web_command_in_flight(cid, "startJob"):
             flash(
                 "درخواست شروع نردبان از قبل در صف یا در حال پردازش است؛ تا اتمام همان فرآیند درخواست جدید ثبت نمی‌شود.",
                 "err",

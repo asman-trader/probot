@@ -1,7 +1,7 @@
 {
   "database": "bot.db",
-  "token": "8056296025:AAHWTT9Lx_irl-GxlGCYAm2UBxhP7pLHic8",
-  "admin": 926182691,
+  "token": "1963900497:nviS3igrnRzQDagizwDb0GkHfEXfvpTRhUE",
+  "admin": 2061771957,
   "web_password": "admin12345",
   "times": [
     8,
@@ -20,6 +20,6 @@
     5,
     6
   ],
-  "repeat_days": 34,
-  "repeat_start_date": "2026-03-27"
+  "repeat_days": 365,
+  "repeat_start_date": "2026-04-18"
 }

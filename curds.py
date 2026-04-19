@@ -1,5 +1,9 @@
+import re
 import sqlite3
 import os
+import secrets
+import hashlib
+import hmac
 
 class curdCommands:
     def __init__(self, Datas):
@@ -69,7 +73,21 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            tokens_combined = ",".join(tokens)
+            # ادغام با توکن‌های قبلی همان شماره + یک ردیف برای هر phone (بدون تکرار ردیف)
+            cur.execute("SELECT token FROM tokens WHERE phone = ?", (phone,))
+            rows = cur.fetchall()
+            existing_parts = []
+            for row in rows:
+                if row and row[0]:
+                    existing_parts.extend([t for t in str(row[0]).split(",") if t])
+            merged = []
+            seen = set()
+            for t in existing_parts + list(tokens):
+                if t and t not in seen:
+                    seen.add(t)
+                    merged.append(t)
+            cur.execute("DELETE FROM tokens WHERE phone = ?", (phone,))
+            tokens_combined = ",".join(merged)
             sql_insert = "INSERT INTO tokens (phone, token) VALUES (?, ?)"
             cur.execute(sql_insert, (phone, tokens_combined))
             conn.commit()
@@ -275,13 +293,54 @@ class curdCommands:
             print(f"Error adding admin: {e}")
             return 0
 
+    def _logins_table_sql_new(self) -> str:
+        """یک شماره می‌تواند در چند پنل (chatid) مجزا لاگین شود — یکتایی فقط روی (chatid, phone)."""
+        return """
+            CREATE TABLE logins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chatid INTEGER NOT NULL,
+                phone INTEGER NOT NULL,
+                cookie TEXT,
+                active INTEGER,
+                used INTEGER,
+                UNIQUE(chatid, phone)
+            )
+        """
+
     def cTable_logins(self):
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            command = "CREATE TABLE IF NOT EXISTS logins(id INTEGER PRIMARY KEY AUTOINCREMENT, chatid INTEGER, phone INTEGER UNIQUE, cookie TEXT, active INTEGER, used INTEGER)"
-            cur.execute(command)
-            conn.commit()
+            cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='logins'")
+            row = cur.fetchone()
+            if row and row[0] and (
+                re.search(r"phone\s+INTEGER\s+UNIQUE", row[0], re.I)
+                or re.search(r"phone\s+INTEGER\s+NOT\s+NULL\s+UNIQUE", row[0], re.I)
+            ):
+                cur.execute("ALTER TABLE logins RENAME TO logins_legacy_phone_unique")
+                cur.execute(self._logins_table_sql_new())
+                cur.execute(
+                    """
+                    INSERT INTO logins (id, chatid, phone, cookie, active, used)
+                    SELECT id, chatid, phone, cookie, active, used FROM logins_legacy_phone_unique
+                    """
+                )
+                cur.execute("DROP TABLE logins_legacy_phone_unique")
+                conn.commit()
+                print("✅ جدول logins: یکتایی از «فقط phone» به «(chatid, phone)» مهاجرت داده شد.")
+            else:
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS logins ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "chatid INTEGER NOT NULL, "
+                    "phone INTEGER NOT NULL, "
+                    "cookie TEXT, "
+                    "active INTEGER, "
+                    "used INTEGER, "
+                    "UNIQUE(chatid, phone)"
+                    ")"
+                )
+                conn.commit()
             cur.close()
             conn.close()
         except Exception as e:
@@ -291,7 +350,7 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            command = "CREATE TABLE IF NOT EXISTS manage(id INTEGER PRIMARY KEY AUTOINCREMENT, chatid INTEGER UNIQUE, active INTEGER, limite INTEGER, climit INTEGER, nardeban_type INTEGER, last_round_robin_phone INTEGER, interval_minutes INTEGER, stop_hour INTEGER)"
+            command = "CREATE TABLE IF NOT EXISTS manage(id INTEGER PRIMARY KEY AUTOINCREMENT, chatid INTEGER UNIQUE, active INTEGER, limite INTEGER, climit INTEGER, nardeban_type INTEGER, last_round_robin_phone INTEGER, interval_minutes INTEGER, stop_hour INTEGER, cost_priority_1 INTEGER, cost_priority_2 INTEGER)"
             cur.execute(command)
             # اضافه کردن ستون nardeban_type به جدول موجود (اگر وجود نداشته باشد)
             try:
@@ -317,6 +376,18 @@ class curdCommands:
                 conn.commit()
             except:
                 pass  # ستون قبلاً وجود دارد
+            # اولویت پلن هزینه 1
+            try:
+                cur.execute("ALTER TABLE manage ADD COLUMN cost_priority_1 INTEGER")
+                conn.commit()
+            except:
+                pass
+            # اولویت پلن هزینه 2
+            try:
+                cur.execute("ALTER TABLE manage ADD COLUMN cost_priority_2 INTEGER")
+                conn.commit()
+            except:
+                pass
             conn.commit()
             cur.close()
             conn.close()
@@ -347,12 +418,171 @@ class curdCommands:
         except Exception as e:
             print(f"Error creating web_commands table: {e}")
 
+    def cTable_web_panel_auth(self):
+        """رمز ورود پنل وب به‌ازای هر ادمین (شناسهٔ چت بله)"""
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS web_panel_auth(
+                    chatid INTEGER PRIMARY KEY,
+                    pass_hash TEXT NOT NULL,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error creating web_panel_auth table: {e}")
+
+    _PWEB_ITER = 120_000
+
+    @staticmethod
+    def _normalize_phone_digits(raw):
+        if raw is None:
+            return ""
+        text = str(raw).strip()
+        trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+        text = text.translate(trans).replace(" ", "").replace("-", "")
+        if text.startswith("+98"):
+            text = "0" + text[3:]
+        elif text.startswith("98") and len(text) >= 12:
+            text = "0" + text[2:]
+        elif len(text) == 10 and text.startswith("9") and text.isdigit():
+            text = "0" + text
+        return text
+
+    def _hash_panel_password(self, plain: str) -> str:
+        salt = secrets.token_bytes(16)
+        dk = hashlib.pbkdf2_hmac(
+            "sha256",
+            plain.encode("utf-8"),
+            salt,
+            self._PWEB_ITER,
+            dklen=32,
+        )
+        return f"v1:{salt.hex()}:{dk.hex()}"
+
+    def _verify_panel_pass_hash(self, stored: str, plain: str) -> bool:
+        if not stored or not plain:
+            return False
+        parts = str(stored).split(":")
+        if len(parts) != 3 or parts[0] != "v1":
+            return False
+        try:
+            salt = bytes.fromhex(parts[1])
+            expected = bytes.fromhex(parts[2])
+        except Exception:
+            return False
+        dk = hashlib.pbkdf2_hmac(
+            "sha256",
+            plain.encode("utf-8"),
+            salt,
+            self._PWEB_ITER,
+            dklen=len(expected),
+        )
+        return hmac.compare_digest(dk, expected)
+
+    def find_chatid_by_login_phone(self, phone_normalized: str) -> int | None:
+        """اولین chatid که این شماره در logins دارد (بعد از نرمال‌سازی)."""
+        norm = self._normalize_phone_digits(phone_normalized)
+        if not norm:
+            return None
+        variants = {norm}
+        if norm.startswith("0") and len(norm) == 11:
+            variants.add(norm[1:])
+        try:
+            variants.add(str(int(norm)))
+        except Exception:
+            pass
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT chatid, phone FROM logins")
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+            for chatid, ph in rows:
+                dbn = self._normalize_phone_digits(ph)
+                if not dbn:
+                    continue
+                db_vars = {dbn}
+                if dbn.startswith("0") and len(dbn) == 11:
+                    db_vars.add(dbn[1:])
+                try:
+                    db_vars.add(str(int(dbn)))
+                except Exception:
+                    pass
+                if variants & db_vars:
+                    return int(chatid)
+            return None
+        except Exception as e:
+            print(f"Error find_chatid_by_login_phone: {e}")
+            return None
+
+    def issue_web_panel_password(self, chatid: int) -> str:
+        """تولید رمز تصادفی، ذخیرهٔ هش، بازگرداندن رمز به‌صورت یک‌بار خواندنی."""
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        plain = "".join(secrets.choice(alphabet) for _ in range(10))
+        ph = self._hash_panel_password(plain)
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO web_panel_auth (chatid, pass_hash, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(chatid) DO UPDATE SET
+                    pass_hash = excluded.pass_hash,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (int(chatid), ph),
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+            return plain
+        except Exception as e:
+            print(f"Error issue_web_panel_password: {e}")
+            raise
+
+    def verify_web_panel_password(self, chatid: int, plain: str) -> bool:
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT pass_hash FROM web_panel_auth WHERE chatid = ?", (int(chatid),))
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+            if not row or not row[0]:
+                return False
+            return self._verify_panel_pass_hash(row[0], plain)
+        except Exception as e:
+            print(f"Error verify_web_panel_password: {e}")
+            return False
+
+    def has_web_panel_password(self, chatid: int) -> bool:
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM web_panel_auth WHERE chatid = ? AND pass_hash IS NOT NULL AND TRIM(pass_hash) != ''", (int(chatid),))
+            ok = cur.fetchone() is not None
+            cur.close()
+            conn.close()
+            return ok
+        except Exception as e:
+            print(f"Error has_web_panel_password: {e}")
+            return False
+
     def addManage(self, chatid):
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "INSERT OR IGNORE INTO manage (chatid, active, limite, climit, nardeban_type, last_round_robin_phone, interval_minutes, stop_hour) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-            cur.execute(insrt, (chatid, 0, 100, 0, 1, None, 5, None))  # 1 = ترتیبی کامل هر لاگین (پیش‌فرض), 5 = فاصله پیش‌فرض 5 دقیقه
+            insrt = "INSERT OR IGNORE INTO manage (chatid, active, limite, climit, nardeban_type, last_round_robin_phone, interval_minutes, stop_hour, cost_priority_1, cost_priority_2) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            cur.execute(insrt, (chatid, 0, 100, 0, 1, None, 5, None, None, None))  # 1 = ترتیبی کامل هر لاگین (پیش‌فرض), 5 = فاصله پیش‌فرض 5 دقیقه
             conn.commit()
             cur.close()
             conn.close()
@@ -365,26 +595,38 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "INSERT OR IGNORE INTO logins (chatid, phone, cookie, active, used) VALUES (?, ?, ?, ?, ?)"
-            cur.execute(insrt, (chatid, phone, cookie, 0, 0))
+            cid, ph = int(chatid), int(phone)
+            cur.execute("SELECT 1 FROM logins WHERE chatid = ? AND phone = ?", (cid, ph))
+            existed = cur.fetchone() is not None
+            cur.execute(
+                """
+                INSERT INTO logins (chatid, phone, cookie, active, used)
+                VALUES (?, ?, ?, 1, 0)
+                ON CONFLICT(chatid, phone) DO UPDATE SET
+                    cookie = excluded.cookie,
+                    active = 1
+                """,
+                (cid, ph, cookie),
+            )
             conn.commit()
             cur.close()
             conn.close()
-            return 1
+            return 0 if existed else 1
         except Exception as e:
             print(f"error to add login , code : {str(e)}")
             return 0
 
-    def delLogin(self, phone):
+    def delLogin(self, phone, chatid):
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "DELETE FROM logins WHERE phone = ?"
-            cur.execute(insrt, (phone,))
+            insrt = "DELETE FROM logins WHERE phone = ? AND chatid = ?"
+            cur.execute(insrt, (phone, int(chatid)))
             conn.commit()
+            ok = cur.rowcount > 0
             cur.close()
             conn.close()
-            return 1
+            return 1 if ok else 0
         except Exception as e:
             print(e)
             return 0
@@ -480,12 +722,12 @@ class curdCommands:
             print(e)
             return (0, 0, 0)
 
-    def updateLogin(self, phone, cookie):
+    def updateLogin(self, phone, cookie, chatid):
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "UPDATE logins SET cookie = ? WHERE phone = ?"
-            cur.execute(insrt, (cookie, phone))
+            insrt = "UPDATE logins SET cookie = ?, active = 1 WHERE phone = ? AND chatid = ?"
+            cur.execute(insrt, (cookie, phone, int(chatid)))
             conn.commit()
             cur.close()
             conn.close()
@@ -508,12 +750,12 @@ class curdCommands:
             print(f"Error in refresh used, error : {str(e)}")
             return 0
 
-    def updateLimitLogin(self, phone):
+    def updateLimitLogin(self, phone, chatid):
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "UPDATE logins SET used = used + ? WHERE phone = ?"
-            cur.execute(insrt, (1, phone))
+            insrt = "UPDATE logins SET used = used + ? WHERE phone = ? AND chatid = ?"
+            cur.execute(insrt, (1, phone, int(chatid)))
             conn.commit()
             cur.close()
             conn.close()
@@ -522,12 +764,12 @@ class curdCommands:
             print(f"Error updating limit login: {e}")
             return 0
 
-    def getLimitLogin(self, phone):
+    def getLimitLogin(self, phone, chatid):
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "SELECT used FROM logins WHERE phone = ?"
-            cur.execute(insrt, (phone,))
+            insrt = "SELECT used FROM logins WHERE phone = ? AND chatid = ?"
+            cur.execute(insrt, (phone, int(chatid)))
             data = cur.fetchone()
             cur.close()
             conn.close()
@@ -539,12 +781,12 @@ class curdCommands:
             print(f"Error getting limit login: {e}")
             return 0
 
-    def reset_nardeban_count(self, phone):
+    def reset_nardeban_count(self, phone, chatid):
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "UPDATE logins SET used = ? WHERE phone = ?"
-            cur.execute(insrt, (0, phone))
+            insrt = "UPDATE logins SET used = ? WHERE phone = ? AND chatid = ?"
+            cur.execute(insrt, (0, phone, int(chatid)))
             conn.commit()
             cur.close()
             conn.close()
@@ -701,7 +943,7 @@ class curdCommands:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = "SELECT active, limite, climit, nardeban_type, last_round_robin_phone, interval_minutes, stop_hour FROM manage WHERE chatid = ?"
+            insrt = "SELECT active, limite, climit, nardeban_type, last_round_robin_phone, interval_minutes, stop_hour, cost_priority_1, cost_priority_2 FROM manage WHERE chatid = ?"
             cur.execute(insrt, (chatid,))
             data = cur.fetchone()
             cur.close()
@@ -710,19 +952,20 @@ class curdCommands:
                 # اگر interval_minutes وجود نداشته باشد (None)، مقدار پیش‌فرض 5 را برمی‌گردانیم
                 if len(data) < 6 or data[5] is None:
                     result = (*data[:5], 5) if len(data) >= 5 else (0, 100, 0, 1, None, 5)
-                    # اگر stop_hour وجود نداشته باشد، None اضافه می‌کنیم
-                    if len(result) < 7:
+                    while len(result) < 9:
                         result = (*result, None)
                     return result
-                # اگر stop_hour وجود نداشته باشد، None اضافه می‌کنیم
-                if len(data) < 7:
-                    return (*data, None)
+                if len(data) < 9:
+                    result = data
+                    while len(result) < 9:
+                        result = (*result, None)
+                    return result
                 return data
             else:
-                return (0, 100, 0, 1, None, 5, None)  # پیش‌فرض: ترتیبی کامل، بدون آخرین لاگین، فاصله 5 دقیقه، بدون ساعت توقف
+                return (0, 100, 0, 1, None, 5, None, None, None)  # پیش‌فرض: ترتیبی کامل، بدون آخرین لاگین، فاصله 5 دقیقه، بدون ساعت توقف/پلن
         except Exception as e:
             print(f"Error getting manage: {e}")
-            return (0, 100, 0, 1, None, 5, None)
+            return (0, 100, 0, 1, None, 5, None, None, None)
 
     def editLimit(self, newLimit, chatid):
         try:
@@ -795,6 +1038,32 @@ class curdCommands:
             return 1
         except Exception as e:
             print(f"Error removing sents: {e}")
+            return 0
+
+    def remSents_for_tokens(self, chatid, tokens):
+        """حذف رکوردهای sents فقط برای توکن‌های داده‌شده (مثلاً پس از ریست یک لاگین)."""
+        if not tokens:
+            return 0
+        try:
+            uniq = [t for t in {str(x).strip() for x in tokens if x and str(x).strip()}]
+            if not uniq:
+                return 0
+            conn = self._get_connection()
+            cur = conn.cursor()
+            deleted = 0
+            batch_size = 400
+            for i in range(0, len(uniq), batch_size):
+                batch = uniq[i : i + batch_size]
+                placeholders = ",".join(["?" for _ in batch])
+                sql = f"DELETE FROM sents WHERE chatid = ? AND token IN ({placeholders})"
+                cur.execute(sql, (int(chatid),) + tuple(batch))
+                deleted += cur.rowcount or 0
+            conn.commit()
+            cur.close()
+            conn.close()
+            return deleted
+        except Exception as e:
+            print(f"Error removing sents for token list: {e}")
             return 0
 
     def getStats(self, chatid):
@@ -987,18 +1256,28 @@ class curdCommands:
             print(f"Error completing web command: {e}")
             return 0
 
-    def getRecentWebCommands(self, limit=50):
-        """نمایش آخرین وضعیت فرمان‌ها در پنل"""
+    def getRecentWebCommands(self, limit=50, chatid=None):
+        """نمایش آخرین وضعیت فرمان‌ها در پنل؛ در صورت chatid فقط همان ادمین."""
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            insrt = """
-                SELECT id, chatid, command_type, payload, status, result, created_at, processed_at
-                FROM web_commands
-                ORDER BY id DESC
-                LIMIT ?
-            """
-            cur.execute(insrt, (int(limit),))
+            if chatid is not None:
+                insrt = """
+                    SELECT id, chatid, command_type, payload, status, result, created_at, processed_at
+                    FROM web_commands
+                    WHERE chatid = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                """
+                cur.execute(insrt, (int(chatid), int(limit)))
+            else:
+                insrt = """
+                    SELECT id, chatid, command_type, payload, status, result, created_at, processed_at
+                    FROM web_commands
+                    ORDER BY id DESC
+                    LIMIT ?
+                """
+                cur.execute(insrt, (int(limit),))
             rows = cur.fetchall()
             cur.close()
             conn.close()

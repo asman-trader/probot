@@ -14,7 +14,12 @@ class configBot:
             else:
                 self.database = db_name
             
-            self.token = self.config['token']
+            # توکن ربات بله — «token» یا «bale_token»
+            _tok = self.config.get("bale_token") or self.config.get("token")
+            if _tok is not None and str(_tok).strip():
+                self.token = str(_tok).strip()
+            else:
+                self.token = None
             # تبدیل admin به int برای اطمینان از مقایسه صحیح
             admin_value = self.config.get('admin')
             if admin_value is not None:

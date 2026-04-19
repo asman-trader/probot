@@ -193,6 +193,12 @@ async def execute_command(command_row):
         except Exception:
             payload = {}
 
+    primary = int(bot.Datas.admin) if bot.Datas.admin is not None else None
+
+    def _require_primary():
+        if primary is not None and chatid != primary:
+            raise ValueError("این عمل فقط با حساب ادمین اصلی در پنل وب مجاز است.")
+
     if command_type == "setactive":
         active = 1 if str(payload.get("active", "0")) == "1" else 0
         bot.curd.setStatusManage(q="active", v=active, chatid=chatid)
@@ -213,6 +219,7 @@ async def execute_command(command_row):
         return True, f"nardeban_type={ntype}"
 
     if command_type == "setStartTime":
+        _require_primary()
         hour, minute = parse_time_text(payload.get("time_text", ""))
         ok = bot.set_start_time_in_config(hour, minute)
         if not ok:
@@ -221,6 +228,7 @@ async def execute_command(command_row):
         return True, f"start={hour:02d}:{minute:02d}"
 
     if command_type == "setStopTime":
+        _require_primary()
         hour, minute = parse_time_text(payload.get("time_text", ""))
         ok = bot.set_stop_time_in_config(hour, minute)
         if not ok:
@@ -228,6 +236,7 @@ async def execute_command(command_row):
         return True, f"stop={hour:02d}:{minute:02d}"
 
     if command_type == "setRepeatDays":
+        _require_primary()
         days = int(payload.get("repeat_days", "365"))
         if days < 1 or days > 3650:
             raise ValueError("repeat_days باید بین 1 تا 3650 باشد")
@@ -238,6 +247,7 @@ async def execute_command(command_row):
         return True, f"repeat_days={days}"
 
     if command_type == "setWeekdays":
+        _require_primary()
         weekdays = parse_weekdays_text(payload.get("weekdays", ""))
         ok = bot.set_active_weekdays_in_config(weekdays)
         if not ok:
@@ -277,6 +287,7 @@ async def execute_command(command_row):
         return True, "resetTokens done"
 
     if command_type == "addAdmin":
+        _require_primary()
         raw = str(payload.get("admin_chat_id", "")).strip()
         if not raw.isdigit():
             raise ValueError("شناسه چت باید فقط عدد باشد")
@@ -298,6 +309,7 @@ async def execute_command(command_row):
         return True, f"ادمین {new_id} اضافه شد"
 
     if command_type == "removeAdmin":
+        _require_primary()
         raw = str(payload.get("admin_chat_id", "")).strip()
         if not raw.isdigit():
             raise ValueError("شناسه چت باید فقط عدد باشد")

@@ -95,7 +95,7 @@ class nardeban:
             '_gat_UA-32884252-2': '1',
         }
 
-    def selectPlan(self,token):
+    def get_cost_plans(self, token):
         headers = {
             "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 13; SM-S918B Build/TP1A.220624.014)",
             "X-Device-Model": "SM-S918B",
@@ -157,37 +157,59 @@ class nardeban:
         # بررسی وجود کلید 'costs' در پاسخ
         if not isinstance(response_data, dict) or 'costs' not in response_data:
             raise ValueError(f"costs not found in response: {response_data}")
-        
-        data = response_data['costs']
-        
-        # بررسی اینکه data یک لیست است و حداقل یک عنصر دارد
-        if not isinstance(data, list):
-            raise ValueError(f"costs is not a list: {type(data)}")
-        
-        if len(data) == 0:
+
+        costs = response_data['costs']
+        if not isinstance(costs, list):
+            raise ValueError(f"costs is not a list: {type(costs)}")
+        if len(costs) == 0:
             raise ValueError("no costs/plans available for this post")
-        
-        # بررسی وجود حداقل یک عنصر برای data[0]
-        if len(data) < 1:
-            raise ValueError("costs list is empty")
-        
-        # اگر داده‌ها کافی است، بررسی index 2
-        if len(data) >= 3:
-            # بررسی اینکه data[2] یک دیکشنری است و دارای 'available' و 'id' است
-            if isinstance(data[2], dict) and data[2].get('available') == True:
-                plan_id = data[2].get('id')
-                if plan_id:
-                    return plan_id
-        
-        # اگر data[2] در دسترس نبود یا وجود نداشت، از data[0] استفاده کن
-        if isinstance(data[0], dict):
-            plan_id = data[0].get('id')
-            if plan_id:
-                return plan_id
-            else:
-                raise ValueError("plan id not found in data[0]")
-        else:
-            raise ValueError(f"data[0] is not a dict: {type(data[0])}")
+
+        normalized = []
+        for row in costs:
+            if not isinstance(row, dict):
+                continue
+            pid = row.get("id")
+            if pid is None:
+                continue
+            try:
+                pid_int = int(pid)
+            except Exception:
+                continue
+            normalized.append(
+                {
+                    "id": pid_int,
+                    "available": bool(row.get("available", False)),
+                    "name": str(row.get("title") or row.get("name") or f"پلن {pid_int}"),
+                    "price": row.get("price"),
+                }
+            )
+        if not normalized:
+            raise ValueError("no valid cost plans in response")
+        return normalized
+
+    def selectPlan(self, token, priority_1=None, priority_2=None):
+        plans = self.get_cost_plans(token)
+        available_ids = [p["id"] for p in plans if p.get("available")]
+        if not available_ids:
+            raise ValueError("no available plans for this post")
+
+        preferred = []
+        for raw in (priority_1, priority_2):
+            if raw is None or raw == "":
+                continue
+            try:
+                preferred.append(int(raw))
+            except Exception:
+                continue
+
+        for pid in preferred:
+            if pid in available_ids:
+                return pid
+
+        # fallback: همان رفتار قبلی (اگر اندیس 2 موجود و available بود)
+        if len(plans) >= 3 and plans[2].get("available") and plans[2].get("id"):
+            return int(plans[2]["id"])
+        return int(available_ids[0])
 
     def createOrderID(self,token,planPrice):
         json_data = {
@@ -492,7 +514,7 @@ class nardeban:
         else:
             return bToken
 
-    def sendNardeban(self, number, chatid):
+    def sendNardeban(self, number, chatid, priority_1=None, priority_2=None):
         iPost = -1
         # دریافت توکن‌های pending از JSON
         from tokens_manager import get_tokens_from_json
@@ -512,7 +534,7 @@ class nardeban:
         
         # حالا توکن pending را پیدا کردیم، نردبان را انجام می‌دهیم
         try:
-            planCost = int(self.selectPlan(token=token))
+            planCost = int(self.selectPlan(token=token, priority_1=priority_1, priority_2=priority_2))
         except Exception as e:
             # خطا در انتخاب پلن
             error_msg = str(e).strip()
@@ -569,7 +591,7 @@ class nardeban:
                                 # بازگشت لیست با مقدار [1, token, number] در صورت موفقیت
                                 return [1, token, number]
 
-    def sendNardebanWithToken(self, number, chatid, token, require_pending=True):
+    def sendNardebanWithToken(self, number, chatid, token, require_pending=True, priority_1=None, priority_2=None):
         """نردبان یک توکن خاص"""
         if require_pending:
             pending_tokens = self.curd.get_pending_tokens_by_phone(phone=number, chatid=chatid)
@@ -578,7 +600,7 @@ class nardeban:
                 return [0, token, "این توکن قبلاً نردبان شده است"]
         
         try:
-            planCost = int(self.selectPlan(token=token))
+            planCost = int(self.selectPlan(token=token, priority_1=priority_1, priority_2=priority_2))
         except Exception as e:
             error_msg = str(e).strip()
             if not error_msg:
